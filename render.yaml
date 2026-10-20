@@ -1,0 +1,11 @@
+# Render Blueprint: static site, no build step.
+services:
+  - type: web
+    name: amino
+    runtime: static
+    staticPublishPath: .
+    buildCommand: echo "no build"
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff

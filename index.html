@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Amino – das Ameisen-Legespiel</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐜</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>🐜 Amino</h1>
+    <nav>
+      <button data-tab="play" class="active">Spielen</button>
+      <button data-tab="train">KI-Training</button>
+      <button data-tab="rules">Regeln</button>
+    </nav>
+  </header>
+  <main>
+    <section id="tab-play"></section>
+    <section id="tab-train" hidden></section>
+    <section id="tab-rules" hidden></section>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

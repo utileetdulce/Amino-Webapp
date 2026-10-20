@@ -1,0 +1,29 @@
+export const RULES_HTML = `
+<div class="card rules">
+<h2>Amino – Kurzregeln</h2>
+<p>Amino ist ein Legespiel von Asis Hallab und Philipp Niederlag (<a href="https://github.com/asishallab/amino" target="_blank" rel="noopener">Original &amp; Handbuch</a>).
+Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Ressourcen und bringst sie in deinen Hügel.
+<b>Wer zuerst 7 Punkte gesammelt hat, gewinnt.</b> Jeder Spieler bewertet Blume 🌸, Pilz 🍄 und Raupe 🐛 anders (1–3 Punkte, steht an der Hügelkarte).</p>
+<h3>Ein Zug – Aktionen in beliebiger Reihenfolge</h3>
+<ul>
+<li><b>Einkommen (1×):</b> 4 Dreiecke <i>oder</i> 1 Ameisenkarte <i>oder</i> einen gelegten Hügel zurück auf die Hand.</li>
+<li><b>Dreieck tauschen (1×):</b> beliebiges Dreieck gegen eines aus der Hand eines Gegners.</li>
+<li><b>Dreiecke legen:</b> beliebig viele. Wege müssen fortgesetzt werden, offene Kanten dürfen nicht an geschlossene stoßen. Zusammen mit einem Dreieck kannst du einen <b>Hügel</b> (ab dem ersten erscheint deine Ameise) oder eine <b>Ressource</b> legen. Zwischen deinem Hügel und jeder Ressource müssen mindestens 2 Dreiecke Platz haben (gegnerische Hügel zählen nicht).</li>
+<li><b>Ameise bewegen:</b> beliebig weit, wohin Wege führen; mit zwei Hügeln auch unterirdisch dazwischen. Trägt höchstens eine Ressource; auf-/abladen jederzeit.</li>
+<li><b>Kampf (1×):</b> Steht deine Ameise (ohne Last) auf dem Feld einer Ameise mit Ressource, verbirgt der Verteidiger die Ressource in einer Faust; der Angreifer tippt. Treffer = Ressource gehört dir.</li>
+<li><b>Transport (1×):</b> Würfle (0–5); so viele Dreiecke darfst du die getragene Ressource Richtung Hügel bringen. Im Hügel angekommen zählt sie sofort. Nicht erlaubt für Ressourcen, die du in diesem Zug gelegt hast.</li>
+</ul>
+<h3>Ameisenkarten</h3>
+<ul>
+<li><b>Brücke</b> – verbindet zwei Wege, nur du kannst sie überqueren.</li>
+<li><b>Überlagern</b> – lege Dreiecke über freie Felder und verändere das Labyrinth.</li>
+<li><b>Blockade</b> – sperrt ein Dreieck bis zu deinem nächsten Zug.</li>
+<li><b>Flügel</b> – fliege zu einem beliebigen Dreieck (zwei beliebige Karten lassen sich zu Flügeln tauschen).</li>
+<li><b>Rache</b> – verlorenen Kampf wiederholen.</li>
+<li><b>Transport</b> – zwei Würfel beim Transport.</li>
+</ul>
+<h3>Bedienung</h3>
+<p>Dreieck in der Hand anklicken, mit <kbd>R</kbd> / Rechtsklick drehen, auf ein hervorgehobenes Feld klicken. Brett: ziehen = verschieben, Mausrad = Zoom.</p>
+<h3>Abweichungen von der Tabletop-Vorlage</h3>
+<p>Die genauen Wege-Muster der sechs Dreieckstypen sind in dieser Umsetzung nachempfunden (Y-Kreuzung, Kurve, Sackgasse, Gabel mit Stummel, zwei bzw. drei getrennte Stummel). Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel/Ressourcen-Felder verbinden alle ihre Wege; Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
+</div>`;

@@ -1,0 +1,83 @@
+:root {
+  --bg: #f3efe3; --card: #fffdf6; --fg: #25301f; --muted: #6d725f; --accent: #3d7a3a; --accent-fg: #fff; --border: #d8d2bd; --grid: #e4dfcd; --hl: #fff1b8;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1b1f17; --card: #252a1f; --fg: #e8ecd9; --muted: #9aa088; --accent: #6fb765; --accent-fg: #10200d; --border: #3a4130; --grid: #353b2b; --hl: #4b4a22; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+header { display: flex; align-items: center; gap: 24px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 5; }
+header h1 { margin: 0; font-size: 20px; }
+nav { display: flex; gap: 6px; }
+nav button { border: 0; background: transparent; padding: 8px 14px; border-radius: 8px; cursor: pointer; color: var(--fg); font-weight: 600; }
+nav button.active { background: var(--accent); color: var(--accent-fg); }
+main { padding: 12px 16px; }
+section[hidden] { display: none; }
+h2 { font-size: 18px; margin: 0 0 8px; } h3 { font-size: 14px; margin: 0 0 6px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.muted { color: var(--muted); font-size: 13px; }
+button, select, input, textarea { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+button.on { outline: 2px solid var(--accent); }
+textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 11px; }
+.grp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.grp .lbl { font-size: 12px; color: var(--muted); width: 72px; }
+.dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
+.setup { max-width: 760px; margin: 0 auto 12px; }
+.seat-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.seat-row .invite { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; }
+.row { display: block; margin-bottom: 8px; }
+
+.game { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; height: calc(100vh - 80px); }
+.board-wrap { position: relative; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #e9e2cf; min-height: 360px; }
+canvas.board { display: block; touch-action: none; cursor: crosshair; }
+.banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: var(--card); color: var(--fg); border: 3px solid; border-radius: 20px; padding: 4px 16px; font-weight: 600; box-shadow: 0 2px 8px #0003; pointer-events: none; white-space: nowrap; }
+.board-tools { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; }
+.side { overflow-y: auto; padding-right: 4px; }
+.players { display: grid; gap: 6px; margin-bottom: 10px; }
+.player { background: var(--card); border: 1px solid var(--border); border-left: 6px solid var(--pc); border-radius: 10px; padding: 6px 10px; }
+.player.active { box-shadow: 0 0 0 2px var(--pc); }
+.ph { display: flex; align-items: center; } .ph .score { margin-left: auto; font-weight: 700; }
+.pm { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.chip { background: var(--bg); border-radius: 12px; padding: 1px 8px; font-size: 13px; }
+.chip sub { color: var(--muted); margin-left: 2px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.tile { padding: 4px; position: relative; } .tile.sel { outline: 3px solid var(--accent); }
+.tile .cnt { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; }
+.pieces { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 13px; }
+.cardlist { display: flex; flex-wrap: wrap; gap: 6px; }
+.acard { background: #f4e7b6; color: #3a2f08; border: 1px solid #b59a3d; border-radius: 6px; padding: 3px 8px; font-weight: 600; font-size: 13px; }
+.actions button { font-size: 14px; }
+.loglines { font-size: 12.5px; max-height: 170px; overflow-y: auto; }
+.loglines div { padding: 1px 0; border-bottom: 1px solid var(--grid); }
+.inspector .bar { position: relative; background: var(--bg); border-radius: 6px; margin: 3px 0; height: 20px; overflow: hidden; font-size: 12px; }
+.inspector .bar i { position: absolute; inset: 0 auto 0 0; background: #9bbf86aa; }
+.inspector .bar.chosen i { background: #e0a800aa; }
+.inspector .bar span { position: relative; padding: 0 6px; line-height: 20px; }
+.modal { position: fixed; inset: 0; background: #0007; display: grid; place-items: center; z-index: 20; }
+.modal[hidden] { display: none; }
+.dlg { background: var(--card); border-radius: 14px; padding: 18px 22px; max-width: 520px; box-shadow: 0 10px 40px #0008; }
+.fists { display: flex; gap: 16px; justify-content: center; margin-top: 12px; }
+.fists button { font-size: 26px; padding: 18px 28px; }
+
+.train { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr); gap: 12px; align-items: start; }
+.hp { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; margin: 8px 0; }
+.hp label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.hp input, .hp select { width: 100%; }
+.statline { font-size: 13px; padding: 6px 8px; background: var(--bg); border-radius: 8px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+canvas.chart { width: 100%; height: 170px; }
+.watch-board { height: 330px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; position: relative; background: #e9e2cf; }
+.scroll { overflow: auto; max-width: 100%; margin-bottom: 8px; }
+.rules { max-width: 820px; margin: 0 auto; } .rules li { margin: 4px 0; }
+kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+
+@media (max-width: 1000px) {
+  .game { grid-template-columns: 1fr; height: auto; }
+  .board-wrap { height: 60vh; }
+  .train, .charts { grid-template-columns: 1fr; }
+}

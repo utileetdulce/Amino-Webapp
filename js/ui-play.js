@@ -183,6 +183,10 @@ export class PlayUI {
     boardWrap.append(canvas);
     this.banner = el('div', { class: 'banner' });
     boardWrap.append(this.banner);
+    this.ctxMenu = el('div', { class: 'ctxmenu', hidden: true });
+    boardWrap.append(this.ctxMenu);
+    this.boardWrap = boardWrap;
+    this.sheetOpen = false; this.pp = null;
     boardWrap.append(el('div', { class: 'board-tools' },
       el('button', { onclick: () => { this.board.autoFit = true; this.board.fit(); }, title: 'Ansicht einpassen' }, '⤢'),
       el('button', { onclick: () => this.rotate(1), title: 'Dreieck drehen (R)' }, '⟳')));
@@ -192,7 +196,7 @@ export class PlayUI {
     this.modal = el('div', { class: 'modal', hidden: true });
     root.append(this.modal);
     this.board = new BoardView(canvas);
-    this.board.onClick = (cid) => this.onBoardClick(cid);
+    this.board.onClick = (cid, ev) => this.onBoardClick(cid, ev);
     this.board.onHover = (cid) => this.onBoardHover(cid);
     this.board.onWheelRotate = (d) => this.rotate(d);
     this._key = (e) => {
@@ -259,6 +263,7 @@ export class PlayUI {
     const hand = s.players[me]?.hand || [];
     if (this.selTile != null && !hand.includes(this.selTile)) this.selTile = null;
     if (this.selTile == null && hand.length && (this.mode === 'place' || this.mode === 'overlay')) this.selTile = hand[0];
+    this.hideCtx();
     this.renderSide();
     this.renderModal();
     this.updateBoardMode();
@@ -303,6 +308,9 @@ export class PlayUI {
     const me = this.viewSeat();
     const side = this.side;
     side.innerHTML = '';
+    side.classList.toggle('open', !!this.sheetOpen);
+    side.append(el('button', { class: 'sheet-handle', onclick: () => { this.sheetOpen = !this.sheetOpen; this.renderSide(); } },
+      el('span', { class: 'grip' }), this.sheetOpen ? 'Menü schließen' : `Aktionen & Hand (▲${s.players[this.viewSeat()].hand.length})`));
     // players
     const pl = el('div', { class: 'players' });
     for (const p of s.players) {
@@ -335,7 +343,7 @@ export class PlayUI {
       const cv = el('canvas', { class: 'tilecv' });
       const btn = el('button', {
         class: 'tile' + (this.selTile === t ? ' sel' : ''), title: TILE_TYPES[t].name, disabled: !mine,
-        onclick: () => { this.selTile = t; if (this.mode !== 'overlay') this.mode = 'place'; this.refresh(); },
+        onclick: () => { this.selTile = t; if (this.mode !== 'overlay') this.mode = 'place'; this.closeSheet(); this.refresh(); },
       }, cv, el('span', { class: 'cnt' }, '×' + counts[t]));
       tiles.append(btn);
       drawTilePreview(cv, t, this.rot % 3, { color: this.selTile === t ? '#9fc58a' : '#8db37a' });
@@ -367,7 +375,7 @@ export class PlayUI {
       g1.append(btn('4 Dreiecke', has('inc_tiles'), () => dsp({ t: 'inc_tiles' })), btn('Ameisenkarte', has('inc_card'), () => dsp({ t: 'inc_card' })),
         btn('Hügel zurück', has('inc_hill'), () => this.pickHill()), btn('Tauschen', has('swap'), () => this.swapDialog()));
       const g2 = el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Ameise'));
-      g2.append(btn('Bewegen', has('move'), () => { this.mode = 'move'; this.refresh(); }, this.mode === 'move' ? 'on' : ''),
+      g2.append(btn('Bewegen', has('move'), () => { this.mode = 'move'; this.closeSheet(); this.refresh(); }, this.mode === 'move' ? 'on' : ''),
         btn('Aufladen', has('load'), () => dsp({ t: 'load' })), btn('Abladen', has('unload'), () => dsp({ t: 'unload' })),
         btn('⚔ Angreifen', has('fight'), () => dsp(A.find((a) => a.t === 'fight'))),
         btn('🎲 Transport', has('transport', (a) => !a.card), () => dsp({ t: 'transport', card: 0 })),
@@ -375,9 +383,9 @@ export class PlayUI {
       const g3 = el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Karten'));
       const wingsOk = has('wings');
       g3.append(
-        btn('Brücke', has('bridge'), () => { this.mode = 'bridge'; this.bridgeFirst = null; this.refresh(); }, this.mode === 'bridge' ? 'on' : '', CARD_HELP.bridge),
-        btn('Blockade', has('blockage'), () => { this.mode = 'blockage'; this.refresh(); }, this.mode === 'blockage' ? 'on' : '', CARD_HELP.blockage),
-        btn('Flügel', wingsOk, () => { this.mode = 'wings'; this.refresh(); }, this.mode === 'wings' ? 'on' : '', CARD_HELP.wings + (A.some((a) => a.t === 'wings' && a.via) ? ' (nutzt 2 andere Karten)' : '')),
+        btn('Brücke', has('bridge'), () => { this.mode = 'bridge'; this.bridgeFirst = null; this.closeSheet(); this.refresh(); }, this.mode === 'bridge' ? 'on' : '', CARD_HELP.bridge),
+        btn('Blockade', has('blockage'), () => { this.mode = 'blockage'; this.closeSheet(); this.refresh(); }, this.mode === 'blockage' ? 'on' : '', CARD_HELP.blockage),
+        btn('Flügel', wingsOk, () => { this.mode = 'wings'; this.closeSheet(); this.refresh(); }, this.mode === 'wings' ? 'on' : '', CARD_HELP.wings + (A.some((a) => a.t === 'wings' && a.via) ? ' (nutzt 2 andere Karten)' : '')),
         btn('Überlagern', has('super'), () => dsp({ t: 'super' }), '', CARD_HELP.superimpose));
       act.append(g1, g2, g3, el('div', { class: 'grp' }, btn('Zug beenden ▶', has('end'), () => { this.mode = null; dsp({ t: 'end' }); }, 'primary')));
     } else if (mine) act.append(el('span', { class: 'muted' }, 'Bitte im Dialog entscheiden.'));
@@ -423,7 +431,7 @@ export class PlayUI {
   pickHill() {
     const hills = this.acts.filter((a) => a.t === 'inc_hill');
     if (hills.length === 1) return this.ctrl.dispatch(hills[0], actor(this.ctrl.state));
-    this.mode = 'hill'; this.refresh();
+    this.mode = 'hill'; this.closeSheet(); this.refresh();
   }
 
   swapDialog() {
@@ -540,10 +548,13 @@ export class PlayUI {
       }
       default: break;
     }
+    if (this.pp && this.pmap?.has(this.pp.cid)) {
+      b.ghost = { cell: this.pp.cid, tile: this.selTile, rot: this.pp.rots[this.pp.i], piece: this.mode === 'place' ? this.piece : 0, seat: this.viewSeat() };
+    }
   }
 
   onBoardHover(cid) {
-    if (!this.myTurn()) return;
+    if (!this.myTurn() || this.pp) return;
     const b = this.board;
     if ((this.mode === 'place' || this.mode === 'overlay') && this.pmap?.has(cid)) {
       const rots = this.pmap.get(cid);
@@ -553,47 +564,137 @@ export class PlayUI {
     b.draw();
   }
 
-  onBoardClick(cid) {
+  isMobile() { return window.matchMedia('(max-width: 860px)').matches; }
+  closeSheet() { if (this.isMobile() && this.sheetOpen) { this.sheetOpen = false; } }
+
+  hideCtx() { if (this.ctxMenu) this.ctxMenu.hidden = true; }
+
+  openMenu(items, ev, title = '') {
+    const m = this.ctxMenu;
+    m.innerHTML = '';
+    if (title) m.append(el('div', { class: 'ctx-title' }, title));
+    for (const it of items) {
+      m.append(el('button', { class: it.cls || '', disabled: it.disabled, onclick: (e) => { e.stopPropagation(); this.hideCtx(); it.fn(); } }, it.label));
+    }
+    if (!items.length) { m.hidden = true; return; }
+    m.hidden = false;
+    const r = this.boardWrap.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let x = (ev?.clientX ?? r.left + r.width / 2) - r.left + 8, y = (ev?.clientY ?? r.top + r.height / 2) - r.top + 8;
+    x = Math.max(6, Math.min(x, r.width - mw - 6)); y = Math.max(6, Math.min(y, r.height - mh - 6));
+    m.style.left = x + 'px'; m.style.top = y + 'px';
+    this._menuEv = ev;
+  }
+
+  // confirm popover with ghost preview (touch-friendly placement)
+  previewPlace(cid, ev) {
+    const rots = this.pmap.get(cid);
+    this.pp = { cid, rots, i: Math.max(0, rots.indexOf(this.rot)) };
+    this.updateBoardMode(); this.board.draw();
+    const show = () => {
+      this.updateBoardMode(); this.board.draw();
+      const over = this.mode === 'overlay';
+      const pieces = over ? [] : [...new Set(this.acts.filter((a) => a.t === 'place' && a.cell === cid && a.tile === this.selTile).map((a) => a.piece))].sort();
+      const pn = ['Nur Dreieck', '⛰ mit Hügel', '❔ mit Ressource'];
+      this.openMenu([
+        ...(pieces.length > 1 ? [{ label: `Beilage: ${pn[this.piece]} ›`, fn: () => { this.piece = pieces[(pieces.indexOf(this.piece) + 1) % pieces.length]; this.pmap = this.placeMap(); show(); } }] : []),
+        { label: `✔ ${over ? 'Überlagern' : 'Hier legen'}`, cls: 'primary', fn: () => {
+          const rot = this.pp.rots[this.pp.i]; this.pp = null;
+          const a = over ? { t: 'overlay', cell: cid, tile: this.selTile, rot } : { t: 'place', cell: cid, tile: this.selTile, rot, piece: this.piece };
+          this.ctrl.dispatch(a, actor(this.ctrl.state));
+        } },
+        ...(rots.length > 1 ? [{ label: '⟳ Drehen', fn: () => { this.pp.i = (this.pp.i + 1) % rots.length; this.rot = this.pp.rots[this.pp.i]; show(); } }] : []),
+        { label: '✖ Abbrechen', fn: () => { this.pp = null; this.refresh(); } },
+      ], ev);
+    };
+    show();
+  }
+
+  cellMenu(cid, ev) {
+    const s = this.ctrl.state, A = this.acts, me = this.viewSeat();
+    const dsp = (a) => this.ctrl.dispatch(a, actor(s));
+    const items = [];
+    const c = s.cells[cid];
+    const mine = s.players[me];
+    // placement options on empty cell
+    const places = A.filter((a) => a.t === 'place' && a.cell === cid);
+    const seen = new Set();
+    for (const a of places) {
+      const k = a.tile + ':' + a.piece;
+      if (seen.has(k)) continue; seen.add(k);
+      const lbl = `▲ ${TILE_TYPES[a.tile].name}${a.piece === 1 ? ' + ⛰ Hügel' : a.piece === 2 ? ' + ❔ Ressource' : ''}`;
+      items.push({ label: lbl, fn: () => { this.selTile = a.tile; this.piece = a.piece; this.mode = 'place'; this.refresh(); this.previewPlace(cid, ev); } });
+    }
+    const ov = A.filter((a) => a.t === 'overlay' && a.cell === cid);
+    for (const t of new Set(ov.map((a) => a.tile))) items.push({ label: `▲ Überlagern mit ${TILE_TYPES[t].name}`, fn: () => { this.selTile = t; this.mode = 'overlay'; this.refresh(); this.previewPlace(cid, ev); } });
+    const mv = A.find((a) => a.t === 'move' && Math.floor(a.to / 3) === cid);
+    if (mv) items.push({ label: '🐜 Ameise hierher', fn: () => dsp(mv) });
+    const tm = A.find((a) => a.t === 'tmove' && Math.floor(a.to / 3) === cid);
+    if (tm) items.push({ label: '🎲 Ressource hierher bringen', fn: () => dsp(tm) });
+    const wg = A.find((a) => a.t === 'wings' && Math.floor(a.to / 3) === cid);
+    if (wg) items.push({ label: '🪽 Flügel hierher', fn: () => dsp(wg) });
+    const bl = A.find((a) => a.t === 'blockage' && a.cell === cid);
+    if (bl) items.push({ label: '⛔ Blockade hier', fn: () => dsp(bl) });
+    const br = A.filter((a) => a.t === 'bridge' && (a.a === cid || a.b === cid));
+    if (br.length) items.push({ label: '🌉 Brücke von hier …', fn: () => { this.mode = 'bridge'; this.bridgeFirst = cid; this.refresh(); } });
+    const ih = A.find((a) => a.t === 'inc_hill' && a.cell === cid);
+    if (ih) items.push({ label: '⛰ Hügel zurücknehmen', fn: () => dsp(ih) });
+    const antHere = mine.ant && mine.ant.cell === cid;
+    if (antHere) {
+      for (const [t, lbl] of [['load', '⬆ Ressource aufladen'], ['unload', '⬇ Ressource abladen'], ['fight', '⚔ Angreifen']]) {
+        const a = A.find((x) => x.t === t); if (a) items.push({ label: lbl, fn: () => dsp(a) });
+      }
+      for (const a of A.filter((x) => x.t === 'transport')) items.push({ label: a.card ? '🎲🎲 Transport (Karte)' : '🎲 Transport', fn: () => dsp(a) });
+    }
+    if (c) {
+      const here = s.players.filter((q) => q.ant && q.ant.cell === cid).map((q) => q.name);
+      const info = [here.length ? '🐜 ' + here.join(', ') : '', c.hill >= 0 ? `⛰ ${s.players[c.hill].name}` : '', c.res >= 0 ? KIND_ICON[s.resources[c.res].kind] : '', c.block >= 0 ? '⛔' : ''].filter(Boolean).join(' · ');
+      return this.openMenu(items, ev, info || 'Feld');
+    }
+    this.openMenu(items, ev, items.length ? 'Leeres Feld' : '');
+  }
+
+  onBoardClick(cid, ev) {
+    this.hideCtx();
+    if (this.pp) { this.pp = null; this.refresh(); if (cid < 0) return; }
     if (!this.myTurn() || cid < 0) return;
     const s = this.ctrl.state;
     const dsp = (a) => { this.board.ghost = null; this.ctrl.dispatch(a, actor(s)); };
+    const touch = ev?.pointerType === 'touch';
     switch (this.mode) {
       case 'place': case 'overlay': {
         const rots = this.pmap?.get(cid);
-        if (!rots) return;
+        if (!rots) break;
+        if (touch) return this.previewPlace(cid, ev);
         const rot = rots.includes(this.rot) ? this.rot : rots[0];
         if (this.mode === 'overlay') dsp({ t: 'overlay', cell: cid, tile: this.selTile, rot });
         else dsp({ t: 'place', cell: cid, tile: this.selTile, rot, piece: this.piece });
-        break;
+        return;
       }
       case 'move': case 'tmove': case 'wings': {
         const a = this.dmap?.get(cid);
-        if (!a) return;
+        if (!a) break;
         if (this.mode !== 'tmove') this.mode = null;
-        dsp(a);
-        break;
+        return dsp(a);
       }
-      case 'blockage': {
-        const a = this.acts.find((x) => x.t === 'blockage' && x.cell === cid);
-        if (a) { this.mode = null; dsp(a); }
-        break;
-      }
-      case 'hill': {
-        const a = this.acts.find((x) => x.t === 'inc_hill' && x.cell === cid);
-        if (a) { this.mode = null; dsp(a); }
+      case 'blockage': case 'hill': {
+        const a = this.acts.find((x) => (this.mode === 'blockage' ? x.t === 'blockage' : x.t === 'inc_hill') && x.cell === cid);
+        if (a) { this.mode = null; return dsp(a); }
         break;
       }
       case 'bridge': {
         const bs = this.acts.filter((a) => a.t === 'bridge');
         if (this.bridgeFirst == null) {
-          if (bs.some((a) => a.a === cid || a.b === cid)) { this.bridgeFirst = cid; this.refresh(); }
+          if (bs.some((a) => a.a === cid || a.b === cid)) { this.bridgeFirst = cid; return this.refresh(); }
         } else {
           const a = bs.find((x) => (x.a === this.bridgeFirst && x.b === cid) || (x.b === this.bridgeFirst && x.a === cid));
-          if (a) { this.mode = null; this.bridgeFirst = null; dsp(a); } else { this.bridgeFirst = null; this.refresh(); }
+          if (a) { this.mode = null; this.bridgeFirst = null; return dsp(a); }
+          this.bridgeFirst = null; return this.refresh();
         }
         break;
       }
       default: break;
     }
+    this.cellMenu(cid, ev);
   }
 }

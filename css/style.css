@@ -1,12 +1,13 @@
 :root {
+  --radius: 14px; --shadow: 0 1px 2px #2a3a1a14, 0 6px 18px #2a3a1a14;
   --bg: #f3efe3; --card: #fffdf6; --fg: #25301f; --muted: #6d725f; --accent: #3d7a3a; --accent-fg: #fff; --border: #d8d2bd; --grid: #e4dfcd; --hl: #fff1b8;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1b1f17; --card: #252a1f; --fg: #e8ecd9; --muted: #9aa088; --accent: #6fb765; --accent-fg: #10200d; --border: #3a4130; --grid: #353b2b; --hl: #4b4a22; }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
-header { display: flex; align-items: center; gap: 24px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 5; }
+body { margin: 0; background: var(--bg) radial-gradient(1200px 500px at 10% -10%, #dfe9c8 0%, transparent 60%); background-attachment: fixed; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; color: var(--fg); font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+header { display: flex; align-items: center; gap: 24px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 30; }
 header h1 { margin: 0; font-size: 20px; }
 nav { display: flex; gap: 6px; }
 nav button { border: 0; background: transparent; padding: 8px 14px; border-radius: 8px; cursor: pointer; color: var(--fg); font-weight: 600; }
@@ -14,10 +15,10 @@ nav button.active { background: var(--accent); color: var(--accent-fg); }
 main { padding: 12px 16px; }
 section[hidden] { display: none; }
 h2 { font-size: 18px; margin: 0 0 8px; } h3 { font-size: 14px; margin: 0 0 6px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; box-shadow: var(--shadow); }
 .muted { color: var(--muted); font-size: 13px; }
-button, select, input, textarea { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
-button { cursor: pointer; }
+button, select, input, textarea { min-height: 36px; transition: background .12s, border-color .12s, transform .06s; font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; touch-action: manipulation; } button:active:not(:disabled) { transform: scale(.97); }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .4; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
@@ -81,3 +82,54 @@ kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 4px
   .board-wrap { height: 60vh; }
   .train, .charts { grid-template-columns: 1fr; }
 }
+
+
+/* ---- polish ---- */
+header h1 { font-size: 21px; letter-spacing: .3px; }
+nav button { transition: background .15s; }
+.banner { z-index: 6; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+.board-wrap { box-shadow: var(--shadow); }
+.board-tools button { width: 40px; height: 40px; border-radius: 50%; font-size: 18px; padding: 0; box-shadow: var(--shadow); }
+.player { box-shadow: var(--shadow); transition: box-shadow .2s; }
+.player.active { box-shadow: 0 0 0 2px var(--pc), var(--shadow); }
+.tile { background: var(--bg); border-radius: 10px; }
+.acard { box-shadow: 0 1px 0 #b59a3d; }
+.modal { backdrop-filter: blur(3px); }
+.dlg { animation: pop .16s ease-out; }
+@keyframes pop { from { transform: scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+.setup h2 { font-size: 20px; }
+.seat-row b { min-width: 52px; }
+.hero { text-align: center; margin: 4px auto 14px; max-width: 760px; }
+
+/* ---- context menu ---- */
+.ctxmenu { position: absolute; z-index: 15; min-width: 190px; max-width: 78vw; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 30px #0004; padding: 6px; display: flex; flex-direction: column; gap: 4px; animation: pop .12s ease-out; }
+.ctxmenu[hidden] { display: none; }
+.ctxmenu button { text-align: left; border: 0; background: transparent; padding: 10px 12px; border-radius: 10px; min-height: 42px; }
+.ctxmenu button:hover:not(:disabled), .ctxmenu button:active:not(:disabled) { background: var(--bg); }
+.ctxmenu button.primary { background: var(--accent); color: var(--accent-fg); }
+.ctx-title { font-size: 12px; color: var(--muted); padding: 4px 10px 2px; }
+.sheet-handle { display: none; }
+
+/* ---- mobile ---- */
+@media (max-width: 860px) {
+  main { padding: 0; }
+  header { padding: 6px 10px; gap: 10px; }
+  header h1 { font-size: 18px; }
+  nav button { padding: 8px 10px; font-size: 14px; }
+  #tab-play .setup, #tab-rules .card, #tab-train .card { margin-left: 10px; margin-right: 10px; }
+  .game { display: block; height: calc(100dvh - 52px); position: relative; }
+  .board-wrap { position: absolute; inset: 0; height: auto; min-height: 0; border: 0; border-radius: 0; }
+  .banner { top: 8px; font-size: 14px; padding: 3px 12px; }
+  .board-tools { bottom: 70px; }
+  .side { position: fixed; left: 0; right: 0; bottom: 0; z-index: 12; background: var(--bg); border-radius: 18px 18px 0 0; box-shadow: 0 -6px 24px #0003; max-height: 62dvh; overflow-y: auto; padding: 0 10px 12px; transform: translateY(calc(100% - 56px)); transition: transform .22s ease; }
+  .side.open { transform: none; }
+  .sheet-handle { display: flex; align-items: center; justify-content: center; gap: 10px; position: sticky; top: 0; z-index: 2; width: calc(100% + 20px); margin: 0 -10px 8px; border: 0; border-radius: 18px 18px 0 0; background: var(--card); min-height: 56px; font-weight: 700; flex-direction: column; padding: 6px 0 8px; }
+  .sheet-handle .grip { width: 44px; height: 5px; border-radius: 3px; background: var(--border); }
+  .players { grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; }
+  .actions button, .tile { min-height: 44px; }
+  .train, .charts { grid-template-columns: 1fr; }
+  .watch-board { height: 260px; }
+  .modal .dlg { width: calc(100% - 24px); }
+  .fists button { flex: 1; }
+}
+@media (hover: none) { .ctxmenu button { min-height: 46px; font-size: 16px; } }

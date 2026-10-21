@@ -26,20 +26,25 @@ function triPath(ctx, v, tx, ty, sc) {
 }
 
 // Draw path network of a cell shape. cell: {x,y,open,comps,allOpen}, junction: draw all open edges to hub
-export function drawPaths(ctx, cell, junction, tx, ty, sc, color = '#f4f1e4', width = 0.07) {
+export function drawPaths(ctx, cell, junction, tx, ty, sc, color = '#f6f2e2', width = 0.07) {
   const [cx, cy] = cellCenter(cell.x, cell.y);
   const C = [tx(cx), ty(cy)];
-  ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2, width * sc);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const comps = junction ? [cell.allOpen] : cell.comps;
-  for (const comp of comps) {
-    const pts = comp.map((e) => { const m = edgeMid(cell.x, cell.y, e); return [tx(m[0]), ty(m[1])]; });
-    if (pts.length === 1) {
-      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-      ctx.lineTo(pts[0][0] + (C[0] - pts[0][0]) * 0.55, pts[0][1] + (C[1] - pts[0][1]) * 0.55); ctx.stroke();
-    } else if (pts.length === 2) {
-      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); ctx.quadraticCurveTo(C[0], C[1], pts[1][0], pts[1][1]); ctx.stroke();
-    } else {
-      for (const p of pts) { ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(C[0], C[1]); ctx.stroke(); }
+  const base = Math.max(2, width * sc);
+  for (const pass of [0, 1]) {
+    ctx.strokeStyle = pass === 0 ? 'rgba(28,46,22,.38)' : color;
+    ctx.lineWidth = pass === 0 ? base + Math.max(1.5, sc * 0.03) : base;
+    for (const comp of comps) {
+      const pts = comp.map((e) => { const m = edgeMid(cell.x, cell.y, e); return [tx(m[0]), ty(m[1])]; });
+      ctx.beginPath();
+      if (pts.length === 1) {
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        ctx.lineTo(pts[0][0] + (C[0] - pts[0][0]) * 0.55, pts[0][1] + (C[1] - pts[0][1]) * 0.55);
+      } else if (pts.length === 2) {
+        ctx.moveTo(pts[0][0], pts[0][1]); ctx.quadraticCurveTo(C[0], C[1], pts[1][0], pts[1][1]);
+      } else for (const p of pts) { ctx.moveTo(p[0], p[1]); ctx.lineTo(C[0], C[1]); }
+      ctx.stroke();
     }
   }
 }
@@ -111,34 +116,56 @@ export class BoardView {
   }
   _bind() {
     const cv = this.cv;
-    cv.addEventListener('pointerdown', (e) => { this._drag = { x: e.clientX, y: e.clientY, ox: this.ox, oy: this.oy, moved: false }; cv.setPointerCapture(e.pointerId); });
+    this._ptrs = new Map();
+    const zoomAt = (px, py, ns) => {
+      ns = Math.max(20, Math.min(240, ns));
+      const k = ns / this.scale;
+      this.ox = px - (px - this.ox) * k; this.oy = py - (py - this.oy) * k; this.scale = ns;
+    };
+    cv.addEventListener('pointerdown', (e) => {
+      this._ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      cv.setPointerCapture(e.pointerId);
+      if (this._ptrs.size === 2) {
+        const [a, b] = [...this._ptrs.values()];
+        this._pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), scale: this.scale };
+        this._drag = null; this.autoFit = false;
+      } else this._drag = { x: e.clientX, y: e.clientY, ox: this.ox, oy: this.oy, moved: false, type: e.pointerType };
+    });
     cv.addEventListener('pointermove', (e) => {
       const r = cv.getBoundingClientRect();
+      if (this._ptrs.has(e.pointerId)) this._ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      if (this._pinch && this._ptrs.size === 2) {
+        const [a, b] = [...this._ptrs.values()];
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        zoomAt((a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top, this._pinch.scale * d / this._pinch.d);
+        this.draw(); return;
+      }
       if (this._drag) {
         const dx = e.clientX - this._drag.x, dy = e.clientY - this._drag.y;
-        if (Math.abs(dx) + Math.abs(dy) > 4) { this._drag.moved = true; this.autoFit = false; }
+        if (Math.abs(dx) + Math.abs(dy) > 6) { this._drag.moved = true; this.autoFit = false; }
         if (this._drag.moved) { this.ox = this._drag.ox + dx; this.oy = this._drag.oy + dy; this.draw(); return; }
       }
+      if (e.pointerType === 'touch') return;
       const c = this.pick(e.clientX - r.left, e.clientY - r.top);
       if (c !== this.hover) { this.hover = c; if (this.onHover) this.onHover(c); this.draw(); }
     });
-    cv.addEventListener('pointerup', (e) => {
+    const up = (e) => {
+      this._ptrs.delete(e.pointerId);
+      if (this._pinch) { if (this._ptrs.size < 2) this._pinch = null; this._drag = null; return; }
       const d = this._drag; this._drag = null;
-      if (d && !d.moved && this.onClick) {
+      if (d && !d.moved && this.onClick && e.type === 'pointerup') {
         const r = cv.getBoundingClientRect();
         this.onClick(this.pick(e.clientX - r.left, e.clientY - r.top), e);
       }
-    });
-    cv.addEventListener('pointerleave', () => { this.hover = -1; if (this.onHover) this.onHover(-1); this.draw(); });
+    };
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    cv.addEventListener('pointerleave', (e) => { if (e.pointerType === 'touch') return; this.hover = -1; if (this.onHover) this.onHover(-1); this.draw(); });
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = cv.getBoundingClientRect();
-      const px = e.clientX - r.left, py = e.clientY - r.top;
-      const f = Math.exp(-e.deltaY * 0.0015);
       this.autoFit = false;
-      const ns = Math.max(20, Math.min(220, this.scale * f));
-      const k = ns / this.scale;
-      this.ox = px - (px - this.ox) * k; this.oy = py - (py - this.oy) * k; this.scale = ns;
+      zoomAt(e.clientX - r.left, e.clientY - r.top, this.scale * Math.exp(-e.deltaY * 0.0015));
       this.draw();
     }, { passive: false });
     cv.addEventListener('contextmenu', (e) => { e.preventDefault(); if (this.onWheelRotate) this.onWheelRotate(1); });
@@ -147,7 +174,9 @@ export class BoardView {
   draw() {
     const { ctx, w, h, dpr } = this;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#e9e2cf';
+    const bg = ctx.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, Math.max(w, h) * 0.75);
+    bg.addColorStop(0, '#efe8d3'); bg.addColorStop(1, '#d9d0b5');
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
     const s = this.state;
     if (!s) return;
@@ -164,7 +193,9 @@ export class BoardView {
       const c = s.cells[k];
       const v = cellVerts(c.x, c.y);
       triPath(ctx, v, tx, ty, sc);
-      ctx.fillStyle = tileFill(c.id + (c.overlaid ? 999 : 0)); ctx.fill();
+      const g = ctx.createLinearGradient(tx(v[0][0]), ty(v[0][1]), tx(v[1][0] + v[2][0] - v[0][0]), ty(v[1][1] + v[2][1] - v[0][1]));
+      g.addColorStop(0, tileFill(c.id + (c.overlaid ? 999 : 0))); g.addColorStop(1, tileFill(c.id * 7 + 3));
+      ctx.fillStyle = g; ctx.fill();
       ctx.strokeStyle = c.overlaid ? '#d8c27a' : 'rgba(255,255,255,.5)'; ctx.lineWidth = c.overlaid ? 2.2 : 1; ctx.stroke();
       if (this.cellColors.has(c.id)) { triPath(ctx, v, tx, ty, sc); ctx.fillStyle = this.cellColors.get(c.id); ctx.fill(); }
       drawPaths(ctx, c, c.hill >= 0 || c.res >= 0, tx, ty, sc);
@@ -186,6 +217,7 @@ export class BoardView {
       ctx.beginPath(); ctx.moveTo(tx(ca[0]), ty(ca[1])); ctx.lineTo(tx(cb[0]), ty(cb[1])); ctx.stroke(); ctx.setLineDash([]);
     }
     // pieces
+    ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = Math.max(2, sc * 0.06); ctx.shadowOffsetY = Math.max(1, sc * 0.025);
     for (const k in s.cells) {
       const c = s.cells[k];
       const [cx, cy] = cellCenter(c.x, c.y);
@@ -226,6 +258,7 @@ export class BoardView {
         if (p.carry >= 0) drawResource(ctx, X + r * 1.1, Y - r * 1.1, r * 0.8, s.resources[p.carry].kind);
       });
     }
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     // ghost
     if (this.ghost) {
       const g = this.ghost;

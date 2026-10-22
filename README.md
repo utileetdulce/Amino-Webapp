@@ -4,6 +4,7 @@ Spielbare Umsetzung des Legespiels **Amino** ([Original & Handbuch](https://gith
 
 * **Spielen**: 2–6 Spieler. Pro Platz wählbar: Mensch (Hotseat), KI · Heuristik, KI · Zufall, KI · Neuronales Netz oder **Online-Mitspieler**.
 * **Serverloser Multiplayer**: WebRTC-Datenkanäle (P2P). Der Gastgeber erzeugt einen Einladungs-Link (`?join=…`), der Gast öffnet ihn und schickt einen Antwort-Link (`?answer=…`) zurück; im selben Browser wird er automatisch übergeben, sonst einfach einfügen. Kein Server nötig. Der Gastgeber führt die Spiellogik aus; Gäste sehen nur ihre eigenen Ameisenkarten.
+* **Inszenierte KI-Züge**: Jede Aktion wird als Popup beschrieben, die Kamera fährt zum Geschehen, Würfel rollen sichtbar auf dem Brett, Kämpfe und Punkte erscheinen als Pop-ups. Klick/Leertaste geht schneller weiter, „⏸ Schritt“ steuert Aktion für Aktion, „⏩ Schnell“ überspringt alles.
 * **KI-Training im Browser** (Tab „KI-Training“): PPO-Self-Play im Web-Worker mit Live-Charts (Siegquote vs. Zufall/Heuristik, Return, Entropie/KL, Verluste), Gewichts-Heatmaps, Neuron-Aktivierungen und einem Entscheidungs-Inspektor, der zeigt, wie das Netz Aktionen bewertet. Modelle speichern, exportieren, importieren und im Spiel als Gegner wählen.
 * Ein vortrainiertes Modell liegt in `models/pretrained.json`.
 

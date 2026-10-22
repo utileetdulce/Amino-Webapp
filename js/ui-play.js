@@ -293,11 +293,14 @@ export class PlayUI {
     this.banner = el('div', { class: 'banner' });
     boardWrap.append(this.banner);
     this.ctxMenu = el('div', { class: 'ctxmenu', hidden: true });
-    boardWrap.append(this.ctxMenu);
+    this.capEl = el('div', { class: 'caption', hidden: true });
+    this.bigEl = el('div', { class: 'bigpop', hidden: true });
+    boardWrap.append(this.ctxMenu, this.capEl, this.bigEl);
     this.boardWrap = boardWrap;
     this.sheetOpen = false; this.pp = null;
-    boardWrap.append(el('div', { class: 'board-tools' },
-      el('button', { onclick: () => { this.board.autoFit = true; this.board.fit(); }, title: 'Ansicht einpassen' }, '⤢'),
+    this.skipBtn = el('button', { class: 'skipbtn', hidden: true, title: 'Weiter (Leertaste / Klick auf das Brett)', onclick: () => this.skipAI() }, '⏭ Weiter');
+    boardWrap.append(el('div', { class: 'board-tools' }, this.skipBtn,
+      el('button', { onclick: () => { this.board.autoFit = true; this.board.flyToAll({ ms: 500 }); }, title: 'Ansicht einpassen' }, '⤢'),
       el('button', { onclick: () => this.rotate(1), title: 'Dreieck drehen (R)' }, '⟳')));
     this.side = el('div', { class: 'side' });
     layout.append(boardWrap, this.side);
@@ -312,6 +315,7 @@ export class PlayUI {
       if (!this.ctrl || !this.root.isConnected) return;
       if (e.key === 'r' || e.key === 'R') this.rotate(1);
       if (e.key === 'Escape') { this.mode = null; this.bridgeFirst = null; this.refresh(); }
+      if ((e.key === ' ' || e.key === 'Enter') && !this.myTurn() && !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(document.activeElement?.tagName)) { e.preventDefault(); this.skipAI(); }
     };
     window.addEventListener('keydown', this._key);
     ctrl.on((s, ev) => this.onState(s, ev));
@@ -339,20 +343,67 @@ export class PlayUI {
     return !s.over && c.isLocalSeat(actor(s));
   }
 
+  skipAI() { this.hideBig(); this.ctrl?.skip(); }
+
+  caption(pre, sub, ms) {
+    const el_ = this.capEl;
+    clearTimeout(this._capT);
+    const s = this.ctrl.state;
+    el_.innerHTML = '';
+    el_.style.setProperty('--pc', pre.color || '#888');
+    el_.append(el('span', { class: 'cap-icon' }, pre.icon), el('div', { class: 'cap-body' }, el('b', {}, pre.text), (sub || pre.sub) ? el('span', {}, sub || pre.sub) : null),
+      this.myTurn() ? null : el('i', { class: 'cap-hint' }, 'Klick = weiter'));
+    el_.hidden = false;
+    el_.classList.remove('in'); void el_.offsetWidth; el_.classList.add('in');
+    this._capT = setTimeout(() => { el_.hidden = true; }, ms || 3200);
+    void s;
+  }
+
+  showBig(big) {
+    const e = this.bigEl;
+    clearTimeout(this._bigT);
+    e.innerHTML = '';
+    e.className = 'bigpop ' + (big.kind || '');
+    e.style.setProperty('--pc', big.color || '#444');
+    e.append(el('div', { class: 'big-icon' }, big.fists ? el('span', { class: 'fists' }, el('i', {}, big.fists[0] ? '🤜' : '🤛'), el('em', {}, 'vs'), el('i', {}, big.fists[1] ? '🤜' : '🤛')) : big.icon),
+      el('div', { class: 'big-title' }, big.title), big.sub ? el('div', { class: 'big-sub' }, big.sub) : null);
+    e.hidden = false;
+    this._bigT = setTimeout(() => this.hideBig(), this.ctrl?.fast ? 900 : 2400);
+  }
+  hideBig() { clearTimeout(this._bigT); if (this.bigEl) this.bigEl.hidden = true; }
+
+  cameraFor(pre) {
+    const c = this.ctrl;
+    if (!c.cinematic || c.fast || !this.board) return;
+    const b = this.board;
+    this.board.insetBottom = this.isMobile() ? (this.sheetOpen ? this.board.h * 0.55 : 150) : 0;
+    const nextLocal = pre.nextSeat != null && c.isLocalSeat(pre.nextSeat);
+    if (pre.overview || !pre.focus.length) { if (pre.overview && (nextLocal || !c.state.over)) b.flyToAll({ ms: 600 }); return; }
+    b.flyTo(pre.focus, { ms: 700, maxScale: pre.zoom === 'tight' ? 130 : 105, minScale: 48, pad: pre.zoom === 'tight' ? 1.6 : 1.4 });
+  }
+
   onState(s, ev) {
-    if (ev?.action) {
-      const a = ev.action;
-      let line = describeAction(s, a, ev.seat);
-      if (a.t === 'transport') line += ` – Wurf ${s.lastRoll?.[1] != null ? `${s.lastRoll[0]}+${s.lastRoll[1]}` : s.lastRoll?.[0]}`;
-      this.logLines.push(line);
-      if (s.lastFight && s.lastFight !== this.lastFightRef && ['guess', 'decline'].includes(a.t)) {
-        this.lastFightRef = s.lastFight;
-        const f = s.lastFight;
-        this.logLines.push(`⚔ Kampf: ${f.attWin ? s.players[f.att].name + ' gewinnt' : s.players[f.def].name + ' verteidigt'}`);
-      }
-      if (this.logLines.length > 60) this.logLines.shift();
+    if (ev?.type === 'announce') {
+      this._announced = true;
+      const col = s.players[ev.seat].color;
+      this.caption({ ...ev.pre, color: col }, null, (this.ctrl.fast ? 900 : 4200));
+      this.cameraFor(ev.pre);
+      this.skipBtn.hidden = false;
+      return;
     }
-    if (s.over) this.logLines.push('🏁 ' + winnerText(s));
+    if (ev?.type === 'applied') {
+      const { pre, post, seat } = ev;
+      const local = this.ctrl.isLocalSeat(seat);
+      this.logLines.push(pre.text + (post.sub ? ' – ' + post.sub : ''));
+      if (this.logLines.length > 60) this.logLines.shift();
+      const col = s.players[seat].color;
+      if (!local && !this._announced) { this.caption({ ...pre, color: col }, post.sub, 3200); this.cameraFor(pre); }
+      else if (post.sub && !s.over) this.caption({ ...pre, color: col }, post.sub, this.ctrl.fast ? 900 : 3200);
+      this._announced = false;
+      if (post.dice) this.board.rollDice({ cell: post.dice.cell, values: post.dice.values, card: post.dice.card });
+      if (post.big) this.showBig(post.big);
+    }
+    this.skipBtn.hidden = s.over || this.myTurn() || this.ctrl.seats[actor(s)]?.kind !== 'ai';
     this.refresh();
   }
 
@@ -384,6 +435,8 @@ export class PlayUI {
 
   ensureVisible() {
     const b = this.board, s = this.ctrl.state;
+    if (this.ctrl.cinematic && !this.myTurn()) return;
+    if (b.cam) return;
     let out = false;
     for (const k in s.cells) {
       const c = s.cells[k];
@@ -529,8 +582,11 @@ export class PlayUI {
     lg.append(ul);
     const tools = el('div', { class: 'grp' });
     if (c.mode !== 'client') {
-      tools.append(el('label', {}, 'KI-Tempo ', el('input', { type: 'range', min: 40, max: 1500, value: 1540 - c.speed, oninput: (e) => (c.speed = 1540 - +e.target.value) })),
-        el('button', { onclick: () => { c.paused = !c.paused; if (!c.paused) c.schedule(); else clearTimeout(c.timer); this.refresh(); } }, c.paused ? '▶ Weiter' : '⏸ Pause'));
+      const tg = (label, on, fn, title) => el('button', { class: on ? 'on' : '', title, onclick: () => { fn(); this.renderSide(); } }, label);
+      tools.append(el('label', { class: 'speed', title: 'Tempo der KI-Züge' }, '🐢', el('input', { type: 'range', min: 150, max: 2000, value: 2150 - c.speed, oninput: (e) => (c.speed = 2150 - +e.target.value) }), '🐇'),
+        tg('🎥 Kamera', c.cinematic, () => { c.cinematic = !c.cinematic; }, 'Kamerafahrten zu den KI-Aktionen'),
+        tg('⏩ Schnell', c.fast, () => { c.fast = !c.fast; }, 'KI-Züge ohne Kamera und Pausen'),
+        tg('⏸ Schritt', c.paused, () => c.setPaused(!c.paused), 'Schrittmodus: KI geht nur per Klick/Leertaste weiter'));
     }
     tools.append(el('button', { onclick: () => { if (confirm('Spiel verlassen?')) this.closeGame(); } }, 'Zum Menü'));
     lg.append(tools);
@@ -765,6 +821,7 @@ export class PlayUI {
 
   onBoardClick(cid, ev) {
     this.hideCtx();
+    if (!this.myTurn() && !this.ctrl.state.over) { this.skipAI(); return; }
     if (this.pp) { this.pp = null; this.refresh(); if (cid < 0) return; }
     if (!this.myTurn() || cid < 0) return;
     const s = this.ctrl.state;

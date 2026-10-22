@@ -63,6 +63,7 @@ export class BoardView {
     this._drag = null;
     this.focusSeat = -1;
     this.autoFit = true;
+    this.insetBottom = 0; this.cam = null; this.fx = []; this._raf = 0;
     this.cardView = false;
     this._bind();
     this._ro = new ResizeObserver(() => this.resize());
@@ -169,6 +170,84 @@ export class BoardView {
       this.draw();
     }, { passive: false });
     cv.addEventListener('contextmenu', (e) => { e.preventDefault(); if (this.onWheelRotate) this.onWheelRotate(1); });
+  }
+
+
+  // ---------- camera ----------
+  bboxOf(cells, pad = 1.2) {
+    let minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9;
+    for (const c of cells) for (const v of cellVerts(cellX(c), cellY(c))) {
+      minx = Math.min(minx, v[0]); maxx = Math.max(maxx, v[0]); miny = Math.min(miny, v[1]); maxy = Math.max(maxy, v[1]);
+    }
+    return { minx: minx - pad, maxx: maxx + pad, miny: miny - pad * 0.866, maxy: maxy + pad * 0.866 };
+  }
+  allCells() { return this.state ? Object.keys(this.state.cells).map(Number) : []; }
+  // smooth camera move so that `cells` fill the view (clamped zoom)
+  flyTo(cells, { ms = 650, minScale = 44, maxScale = 120, pad = 1.2 } = {}) {
+    if (!cells.length) cells = this.allCells();
+    if (!cells.length) return;
+    const b = this.bboxOf(cells, pad);
+    const vh = Math.max(120, this.h - this.insetBottom);
+    const scale = Math.max(minScale, Math.min(maxScale, this.w / (b.maxx - b.minx), vh / (b.maxy - b.miny)));
+    const ox = this.w / 2 - ((b.minx + b.maxx) / 2) * scale;
+    const oy = vh / 2 - ((b.miny + b.maxy) / 2) * scale;
+    this.autoFit = false;
+    this.cam = { t0: performance.now(), ms, from: [this.ox, this.oy, this.scale], to: [ox, oy, scale] };
+    this.kick();
+  }
+  flyToAll(opts = {}) { this.flyTo(this.allCells(), { maxScale: 90, minScale: 30, pad: 1.4, ...opts }); }
+
+  // ---------- dice ----------
+  rollDice({ cell, values, card, ms = 1300, hold = 2200 }) {
+    this.fx.push({ kind: 'dice', cell, values, card, t0: performance.now(), ms, hold, tilt: [Math.random() * 0.5 - 0.25, Math.random() * 0.5 - 0.25] });
+    this.kick();
+  }
+  kick() {
+    if (this._raf) return;
+    const loop = () => {
+      this._raf = 0;
+      const now = performance.now();
+      if (this.cam) {
+        const k = Math.min(1, (now - this.cam.t0) / this.cam.ms);
+        const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+        const f = this.cam.from, t = this.cam.to;
+        // zoom about the interpolated centre for a smooth "dolly" feel
+        this.scale = f[2] + (t[2] - f[2]) * e;
+        this.ox = f[0] + (t[0] - f[0]) * e; this.oy = f[1] + (t[1] - f[1]) * e;
+        if (k >= 1) this.cam = null;
+      }
+      this.fx = this.fx.filter((x) => now - x.t0 < x.ms + x.hold + 400);
+      this.draw();
+      if (this.cam || this.fx.length) this._raf = requestAnimationFrame(loop);
+    };
+    this._raf = requestAnimationFrame(loop);
+  }
+  drawFx(ctx) {
+    const now = performance.now();
+    for (const f of this.fx) {
+      if (f.kind !== 'dice') continue;
+      const age = now - f.t0;
+      const t = Math.min(1, age / f.ms);
+      const fade = age > f.ms + f.hold ? 1 - (age - f.ms - f.hold) / 400 : 1;
+      const c = this.state.cells[f.cell];
+      if (!c) continue;
+      const [cx, cy] = cellCenter(c.x, c.y);
+      const sz = Math.max(34, this.scale * 0.55);
+      const dice = [f.values[0], f.values[1]];
+      for (let i = 0; i < 2; i++) {
+        const active = dice[i] != null;
+        const rest = [this.tx(cx) + (i ? 1 : -1) * sz * 0.85, this.ty(cy) - sz * 1.15 + (i ? 0.25 : 0) * sz];
+        const startOff = [(i ? 1 : -1) * sz * 5 + sz * 4, -sz * 3.5];
+        const e = 1 - Math.pow(1 - t, 3);
+        const bounce = active ? -Math.abs(Math.sin(t * Math.PI * 3.2)) * (1 - t) * sz * 0.9 : 0;
+        const x = rest[0] + startOff[0] * (1 - e), y = rest[1] + startOff[1] * (1 - e) + bounce;
+        const ang = active ? (1 - e) * (i ? -9 : 9) + f.tilt[i] : 0;
+        const val = !active ? 0 : t < 0.78 ? Math.floor(now / 75 + i * 3) % 6 : dice[i];
+        ctx.save(); ctx.globalAlpha = Math.max(0, fade) * (active ? 1 : 0.35);
+        drawDie(ctx, x, y, sz, ang, val, active);
+        ctx.restore();
+      }
+    }
   }
 
   draw() {
@@ -280,7 +359,31 @@ export class BoardView {
       const v = cellVerts(cellX(this.hover), cellY(this.hover));
       triPath(ctx, v, tx, ty, sc); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
     }
+    this.drawFx(ctx);
   }
+}
+
+// A rounded die with pips (faces 0..5; 0 is drawn as an empty ring)
+function drawDie(ctx, x, y, size, ang, v, active) {
+  ctx.translate(x, y); ctx.rotate(ang);
+  const r = size * 0.18, h = size / 2;
+  ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = size * 0.25; ctx.shadowOffsetY = size * 0.12;
+  ctx.beginPath();
+  ctx.moveTo(-h + r, -h); ctx.arcTo(h, -h, h, h, r); ctx.arcTo(h, h, -h, h, r); ctx.arcTo(-h, h, -h, -h, r); ctx.arcTo(-h, -h, h, -h, r); ctx.closePath();
+  const g = ctx.createLinearGradient(-h, -h, h, h);
+  g.addColorStop(0, '#fffdf4'); g.addColorStop(1, active ? '#e9dfc2' : '#d8d2c0');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = active ? '#6b5e3a' : '#8a8366'; ctx.lineWidth = Math.max(1.5, size * 0.04);
+  if (!active) ctx.setLineDash([size * 0.12, size * 0.1]);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#2a2417';
+  const q = size * 0.24, pr = size * 0.085;
+  const P = { 1: [[0, 0]], 2: [[-q, -q], [q, q]], 3: [[-q, -q], [0, 0], [q, q]], 4: [[-q, -q], [q, -q], [-q, q], [q, q]], 5: [[-q, -q], [q, -q], [0, 0], [-q, q], [q, q]] };
+  if (!active) { ctx.font = `${Math.round(size * 0.42)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🃏', 0, 1); }
+  else if (v === 0) { ctx.beginPath(); ctx.arc(0, 0, size * 0.17, 0, 7); ctx.lineWidth = size * 0.07; ctx.strokeStyle = '#8b1e1e'; ctx.stroke(); }
+  else for (const [px, py] of P[v]) { ctx.beginPath(); ctx.arc(px, py, pr, 0, 7); ctx.fill(); }
+  ctx.rotate(-ang); ctx.translate(-x, -y);
 }
 
 function inTri(px, py, v) {

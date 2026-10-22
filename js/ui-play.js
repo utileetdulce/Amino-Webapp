@@ -320,6 +320,18 @@ export class PlayUI {
       if ((e.key === ' ' || e.key === 'Enter') && !this.myTurn() && !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(document.activeElement?.tagName)) { e.preventDefault(); this.skipAI(); }
     };
     window.addEventListener('keydown', this._key);
+    // click outside the panel collapses the open tab (the click itself still reaches the board)
+    this._outside = (e) => {
+      if (!this.ctrl || !this.tab || !this.root.isConnected) return;
+      if (e.target.closest('.side, .ctxmenu, .modal, .tabbar')) return;
+      if (!this.root.contains(e.target)) return;
+      const pd = this.ctrl.state.pending;
+      if (pd && this.myTurn() && ['tmove', 'super'].includes(pd.type)) return;
+      this.tab = null;
+      if (this.mode !== 'place' && this.mode !== 'overlay') this.mode = this.mode === 'move' ? 'move' : this.mode;
+      this.refresh();
+    };
+    document.addEventListener('pointerdown', this._outside, true);
     ctrl.on((s, ev) => this.onState(s, ev));
     this.onState(ctrl.state, {});
     this.board.fit();
@@ -327,6 +339,7 @@ export class PlayUI {
 
   closeGame() {
     window.removeEventListener('keydown', this._key);
+    document.removeEventListener('pointerdown', this._outside, true);
     this.ctrl?.destroy();
     this.ctrl = null;
     this.renderSetup();
@@ -565,7 +578,7 @@ export class PlayUI {
     const pane = el('div', { class: 'pane' });
     if (this.tab) {
       const builders = { income: () => this.paneIncome(), place: () => this.panePlace(), attack: () => this.paneAttack(), move: () => this.paneMove(), cards: () => this.paneCards(), log: () => this.paneLog() };
-      pane.append(el('div', { class: 'pane-head' }, el('b', {}, TABS.find((t) => t[0] === this.tab)[2]), el('button', { class: 'x', title: 'Einklappen', onclick: () => this.setTab(this.tab) }, '✕')));
+      pane.append(el('div', { class: 'pane-head', title: 'Einklappen', onclick: () => this.setTab(this.tab) }, el('b', {}, TABS.find((t) => t[0] === this.tab)[2]), el('span', { class: 'x' }, '✕')));
       pane.append(builders[this.tab]());
     }
     side.append(pane, rail);

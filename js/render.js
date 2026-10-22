@@ -335,7 +335,7 @@ export class BoardView {
         ctx.lineWidth = Math.max(2, sc * 0.05); ctx.strokeStyle = p.color; ctx.stroke();
         ctx.font = `${Math.round(r * 1.7)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
         ctx.fillText('🐜', X, Y + 1);
-        if (p.carry >= 0) drawResource(ctx, X + r * 1.1, Y - r * 1.1, r * 0.8, s.resources[p.carry].kind);
+        if (p.carry >= 0) { drawResource(ctx, X + r * 1.1, Y - r * 1.1, r * 0.8, s.resources[p.carry].kind); ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(2, sc * 0.04); ctx.beginPath(); ctx.arc(X + r * 1.1, Y - r * 1.1, r * 0.95, 0, 7); ctx.stroke(); }
       });
     }
     ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;

@@ -41,7 +41,10 @@ export function describeRich(s, a, pi) {
       }
       if (p.carry >= 0 && tc.hill !== pi) why += ' Sie trägt eine Ressource mit.';
       const under = from != null && s.cells[from].hill === pi && tc.hill === pi;
-      return r('🐜', under ? `${me} nutzt den Tunnel zwischen den Hügeln` : `${me} bewegt die Ameise`, why, [from, to], { path: true });
+      const carry = p.carry >= 0 ? ` (trägt ${KIND_ICON[s.resources[p.carry].kind]} ${KINDS[s.resources[p.carry].kind]})` : '';
+      const dest = tc.hill === pi ? ' zum eigenen Hügel' : tc.hill >= 0 ? ` über den Hügel von ${nm(s, tc.hill)}` : tc.res >= 0 ? ` zu ${KIND_ICON[s.resources[tc.res].kind]} ${KINDS[s.resources[tc.res].kind]}` : '';
+      const log = under ? `${me} nutzt den Tunnel zwischen den Hügeln${carry}` : `${me} bewegt die Ameise${dest}${carry}${p.carry >= 0 && tc.hill === pi ? ' – noch nicht eingelagert, dafür braucht es einen Transport' : ''}`;
+      return r('🐜', under ? `${me} nutzt den Tunnel zwischen den Hügeln` : `${me} bewegt die Ameise`, why, [from, to], { path: true, log });
     }
     case 'load': {
       const c = s.cells[from];
@@ -91,7 +94,8 @@ export function describeResult(s, a, pi, before) {
   if (a.t === 'transport') {
     out.dice = { values: s.lastRoll, card: !!a.card, seat: pi, cell: antCell(s, pi) };
     const sum = (s.lastRoll[0] || 0) + (s.lastRoll[1] || 0);
-    out.sub = sum ? `Gewürfelt: ${s.lastRoll[1] != null ? s.lastRoll[0] + ' + ' + s.lastRoll[1] + ' = ' : ''}${sum}` : 'Gewürfelt: 0 – leider nichts bewegt.';
+    if (before && score(s, pi) > before.scores[pi]) out.sub = `Gewürfelt: ${sum} – Ressource im Hügel eingelagert`;
+    else out.sub = sum ? `Gewürfelt: ${s.lastRoll[1] != null ? s.lastRoll[0] + ' + ' + s.lastRoll[1] + ' = ' : ''}${sum}` : 'Gewürfelt: 0 – leider nichts bewegt.';
   }
   if (before) {
     const gain = score(s, pi) - before.scores[pi];

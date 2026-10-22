@@ -663,7 +663,8 @@ export function applyAction(s, a) {
       s.lastRoll = [d1, a.card ? d2 : null];
       info.roll = d1 + d2;
       s.used.transport = 1;
-      if (d1 + d2 > 0) s.pending = { type: 'tmove', actor: pi, n: d1 + d2 };
+      if (s.cells[p.ant.cell].hill === pi) { deliver(s, pi); info.delivered = true; } // already at the hill: store it
+      else if (d1 + d2 > 0) s.pending = { type: 'tmove', actor: pi, n: d1 + d2 };
       break;
     }
     case 'tmove': {

@@ -412,7 +412,7 @@ export class PlayUI {
       const { pre, post, seat } = ev;
       const local = this.ctrl.isLocalSeat(seat);
       const showCard = post.card && post.card !== 'x' && local;
-      this.logLines.push(pre.text + (post.sub ? ' – ' + post.sub : '') + (showCard ? ` – ${CARD_NAMES[post.card]}` : ''));
+      this.logLines.push((pre.log || pre.text) + (post.sub ? ' – ' + post.sub : '') + (showCard ? ` – ${CARD_NAMES[post.card]}` : ''));
       if (this.logLines.length > 60) this.logLines.shift();
       const col = s.players[seat].color;
       if (!local && !this._announced) { this.caption({ ...pre, color: col }, post.sub, 3200); this.cameraFor(pre); }
@@ -680,6 +680,8 @@ export class PlayUI {
     if (p.carry >= 0) {
       const k = s.resources[p.carry].kind;
       box.append(el('p', {}, `Trägt ${KIND_ICON[k]} ${KINDS[k]} (${p.values[k]} P).`, s.resources[p.carry].laidTurn === s.turnNo ? ' In diesem Zug gelegt – noch nicht transportierbar.' : ''));
+      const here = s.cells[p.ant?.cell];
+      if (here && here.hill === me) box.append(el('p', { class: 'hint' }, '🏠 Du stehst im eigenen Hügel. Die Ressource liegt noch auf dem Ameisenrücken – mit „Transport“ wird sie eingelagert und zählt.'));
     } else box.append(el('p', { class: 'muted' }, 'Die Ameise trägt nichts.'));
     box.append(this.opt('🎲', 'Transport', s.used.transport ? 'schon benutzt' : 'Würfel (0–5): so weit Richtung Hügel', has('transport', (a) => !a.card), () => dsp({ t: 'transport', card: 0 }), 'big'));
     if (hasCard(p, 'transport')) box.append(this.opt('🎲🎲', 'Transport mit Karte', 'zwei Würfel', has('transport', (a) => a.card), () => dsp({ t: 'transport', card: 1 })));

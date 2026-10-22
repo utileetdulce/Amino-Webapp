@@ -4,7 +4,7 @@ import { BoardView, drawTilePreview, KIND_ICON } from './render.js';
 import { cellX, cellY, cellId } from './geometry.js';
 import { GameController } from './game.js';
 import { describeAction, candidateText, CARD_NAMES, CARD_HELP } from './text.js';
-import { HostLink, GuestLink } from './net.js';
+import { HostLink, GuestLink, openBus, unpack, extractCode } from './net.js';
 import { Net } from './nn.js';
 import { listModels, loadModel, loadPretrained } from './store.js';
 
@@ -43,7 +43,18 @@ export class PlayUI {
     this.ctrl = null;
     this.setup = { n: 2, seats: [{ kind: 'human' }, { kind: 'heuristic' }, { kind: 'heuristic' }, { kind: 'heuristic' }, { kind: 'heuristic' }, { kind: 'heuristic' }], links: {} };
     this.models = [];
-    this.renderSetup();
+    const q = new URLSearchParams(location.search);
+    const join = q.get('join'), answer = q.get('answer');
+    if (join || answer) history.replaceState(null, '', location.pathname + location.hash);
+    if (answer) this.renderAnswerRelay(answer);
+    else if (join) this.renderJoinOnly(join);
+    else this.renderSetup();
+  }
+
+  // opened an invite link: show only the join card (plus an escape hatch)
+  renderJoinOnly(code) {
+    this.root.innerHTML = '';
+    this.root.append(this.joinPanel(code), el('div', { class: 'setup' }, el('button', { onclick: () => { this.guest?.close?.(); this.renderSetup(); } }, 'Stattdessen eigenes Spiel starten')));
   }
 
   // ---------------- setup / lobby ----------------
@@ -76,58 +87,156 @@ export class PlayUI {
     }
     const hint = el('p', { class: 'muted' }, 'Ziel: Als Erstes 7 Punkte an Ressourcen in den Hügel bringen. Jeder Spieler bewertet Blume/Pilz/Raupe anders (1–3 Punkte).');
     const go = el('button', { class: 'primary', onclick: () => this.startFromSetup() }, 'Spiel starten');
-    wrap.append(hint, go);
+    const friend = el('button', { onclick: () => { st.seats[0].kind = 'human'; st.seats[1].kind = 'remote'; this.renderSetup(); } }, '👥 Freund online einladen');
+    wrap.append(hint, el('div', { class: 'grp' }, go, friend));
     root.append(wrap);
 
-    // join panel
-    const join = el('div', { class: 'card setup' });
-    join.append(el('h2', {}, 'Online beitreten (ohne Server)'));
-    join.append(el('p', { class: 'muted' }, 'Peer-to-Peer per WebRTC. Der Gastgeber erzeugt einen Einladungs-Code, du fügst ihn hier ein und schickst den Antwort-Code zurück. Kein Server, keine Anmeldung.'));
-    const inv = el('textarea', { rows: 3, placeholder: 'Einladungs-Code des Gastgebers einfügen' });
-    const ans = el('textarea', { rows: 3, readonly: true, placeholder: 'Dein Antwort-Code erscheint hier' });
-    const status = el('div', { class: 'muted' });
-    join.append(inv, el('button', {
-      onclick: async () => {
-        try {
-          const g = new GuestLink();
-          this.guest = g;
-          ans.value = await g.acceptInvite(inv.value);
-          status.textContent = 'Antwort-Code an den Gastgeber schicken – warte auf Verbindung …';
-          g.onOpen = () => { status.textContent = 'Verbunden! Warte auf Spielstart …'; g.send({ type: 'hello' }); };
-          g.onMessage = (m) => this.onHostMessage(m);
-        } catch (e) { status.textContent = 'Fehler: ' + e.message; }
-      },
-    }, 'Antwort-Code erzeugen'), ans,
-    el('button', { onclick: () => navigator.clipboard?.writeText(ans.value) }, 'Kopieren'), status);
-    root.append(join);
+    root.append(this.joinPanel(''));
+  }
+
+  // ---------------- online matchmaking ----------------
+  inviteUrl(code) { return `${location.origin}${location.pathname}?join=${code}`; }
+  answerUrl(code) { return `${location.origin}${location.pathname}?answer=${code}`; }
+
+  async copyText(text, btn) {
+    try { await navigator.clipboard.writeText(text); } catch {
+      const t = el('textarea', { style: 'position:fixed;opacity:0' }, text); document.body.append(t); t.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ } t.remove();
+    }
+    if (btn) { const old = btn.textContent; btn.textContent = '✓ kopiert'; setTimeout(() => (btn.textContent = old), 1400); }
+  }
+  async shareUrl(url, text, btn) {
+    if (navigator.share) { try { await navigator.share({ title: 'Amino', text, url }); return; } catch { return; } }
+    this.copyText(url, btn);
+  }
+
+  // host side: one invite per remote seat
+  ensureBus() {
+    if (this.bus !== undefined) return;
+    this.bus = openBus();
+    if (this.bus) this.bus.onmessage = async (e) => {
+      if (e.data?.type !== 'answer') return;
+      try {
+        const m = await unpack(e.data.code);
+        const l = this.setup.links[m.s];
+        if (l && l.tag === m.g && !l.open) { await l.acceptAnswer(e.data.code); this.bus.postMessage({ type: 'ack' }); }
+      } catch (err) { console.warn(err); }
+    };
   }
 
   inviteBox(i) {
-    const box = el('div', { class: 'invite' });
+    this.ensureBus();
     const st = this.setup;
-    const link = st.links[i];
-    const status = el('span', { class: 'muted' }, link?.open ? '✅ verbunden' : 'nicht verbunden');
-    const offer = el('textarea', { rows: 2, readonly: true, placeholder: 'Einladungs-Code' });
-    const ans = el('textarea', { rows: 2, placeholder: 'Antwort-Code des Gastes' });
-    if (link?.code) offer.value = link.code;
-    box.append(
-      el('button', {
-        onclick: async () => {
-          link?.close?.();
-          const l = new HostLink();
-          st.links[i] = l;
-          l.code = await l.createInvite();
-          offer.value = l.code;
-          l.onOpen = () => { status.textContent = '✅ verbunden'; };
-          l.onClose = () => { status.textContent = '❌ getrennt'; };
-        },
-      }, 'Einladung erzeugen'), offer,
-      el('button', { onclick: () => navigator.clipboard?.writeText(offer.value) }, 'Kopieren'),
-      ans,
-      el('button', { onclick: async () => { try { await st.links[i].acceptAnswer(ans.value); status.textContent = 'verbinde …'; } catch (e) { status.textContent = 'Fehler: ' + e.message; } } }, 'Verbinden'),
-      status,
-    );
+    const box = el('div', { class: 'invite' });
+    const draw = () => {
+      const l = st.links[i];
+      box.innerHTML = '';
+      if (!l || !l.code) { box.append(el('span', { class: 'muted' }, 'Einladung wird erzeugt …')); return; }
+      const label = l.open ? '✅ verbunden' : l.state === 'failed' ? '❌ Verbindung fehlgeschlagen – bitte neue Einladung erzeugen' : l.state === 'connecting' ? '⏳ verbinde …' : '⌛ wartet auf Mitspieler';
+      const url = this.inviteUrl(l.code);
+      const link = el('input', { type: 'text', readonly: true, value: url, onfocus: (e) => e.target.select() });
+      const cp = el('button', { class: 'primary', onclick: () => this.copyText(url, cp) }, '📋 Einladungs-Link kopieren');
+      const parts = [el('div', { class: 'invite-status' }, label)];
+      if (!l.open) {
+        parts.push(el('div', { class: 'grp' }, link, cp,
+          navigator.share ? el('button', { onclick: (e) => this.shareUrl(url, 'Spiel mit mir Amino!', e.target) }, '↗ Teilen') : null,
+          el('button', { title: 'Neue Einladung', onclick: () => this.makeInvite(i, true) }, '↻')));
+        const ans = el('input', {
+          type: 'text', placeholder: '2. Schritt: Antwort-Link des Mitspielers hier einfügen',
+          oninput: async (e) => {
+            const v = e.target.value.trim();
+            if (v.length < 40) return;
+            try { await l.acceptAnswer(v); e.target.value = ''; e.target.placeholder = 'verbinde …'; } catch (err) { e.target.value = ''; e.target.placeholder = 'Fehler: ' + err.message; }
+          },
+        });
+        parts.push(ans, el('p', { class: 'muted small' }, '1. Link an deinen Mitspieler schicken · 2. Er öffnet ihn und schickt dir einen Antwort-Link zurück · 3. Hier einfügen – fertig. Öffnest du den Antwort-Link im selben Browser, verbindet es automatisch.'));
+      }
+      box.append(...parts);
+    };
+    box._draw = draw;
+    if (!st.links[i]) this.makeInvite(i); else this.wireLink(i, draw);
+    draw();
     return box;
+  }
+
+  wireLink(i, redraw) {
+    const l = this.setup.links[i];
+    l.onState = redraw; l.onOpen = redraw; l.onClose = redraw;
+  }
+
+  async makeInvite(i, fresh = false) {
+    const st = this.setup;
+    st.links[i]?.close?.();
+    const l = new HostLink(i, this.tag || (this.tag = Math.random().toString(36).slice(2, 8)));
+    st.links[i] = l;
+    await l.createInvite();
+    if (this.root.isConnected) this.renderSetup();
+  }
+
+  // guest side
+  joinPanel(prefill) {
+    const join = el('div', { class: 'card setup join' });
+    join.append(el('h2', {}, prefill ? '🐜 Du wurdest zu einem Amino-Spiel eingeladen' : 'Online beitreten (ohne Server)'));
+    const body = el('div');
+    join.append(body);
+    const status = el('div', { class: 'invite-status' });
+    const run = async (code) => {
+      try {
+        this.guest?.close?.();
+        const g = new GuestLink();
+        this.guest = g;
+        body.querySelectorAll('.answer').forEach((n) => n.remove());
+        const ac = await g.acceptInvite(code);
+        const url = this.answerUrl(ac);
+        const cp = el('button', { class: 'primary big', onclick: () => this.copyText(url, cp) }, '📋 Antwort-Link kopieren');
+        body.append(el('div', { class: 'answer' },
+          el('p', {}, 'Schicke diesen Antwort-Link an den Gastgeber. Sobald er ihn öffnet oder einfügt, startet die Verbindung.'),
+          el('div', { class: 'grp' }, el('input', { type: 'text', readonly: true, value: url, onfocus: (e) => e.target.select() }), cp,
+            navigator.share ? el('button', { class: 'big', onclick: (e) => this.shareUrl(url, 'Meine Amino-Antwort', e.target) }, '↗ Teilen') : null)));
+        status.textContent = '⌛ warte auf den Gastgeber …';
+        g.onState = (s) => { if (s === 'connecting') status.textContent = '⏳ verbinde …'; if (s === 'failed') status.textContent = '❌ Verbindung fehlgeschlagen – bitte neuen Einladungs-Link anfordern'; };
+        g.onOpen = () => { status.textContent = '✅ verbunden – warte auf Spielstart …'; g.send({ type: 'hello' }); body.querySelectorAll('.answer').forEach((n) => n.remove()); };
+        g.onMessage = (m) => this.onHostMessage(m);
+      } catch (e) { status.textContent = '❌ ' + e.message; }
+    };
+    const inp = el('input', {
+      type: 'text', placeholder: 'Einladungs-Link oder -Code hier einfügen',
+      oninput: (e) => { const v = e.target.value.trim(); if (v.length > 40) run(v); },
+    });
+    if (!prefill) body.append(el('p', { class: 'muted' }, 'Peer-to-Peer per WebRTC, kein Server, keine Anmeldung. Öffne den Einladungs-Link deines Gastgebers – oder füge ihn hier ein:'), inp);
+    body.append(status);
+    if (prefill) run(prefill);
+    return join;
+  }
+
+  // opened ?answer=… link (host side): hand it to the waiting game tab
+  renderAnswerRelay(code) {
+    const root = this.root;
+    root.innerHTML = '';
+    const card = el('div', { class: 'card setup' }, el('h2', {}, 'Antwort wird übergeben …'));
+    root.append(card);
+    this.ensureBus();
+    let acked = false;
+    if (this.bus) {
+      this.bus.onmessage = (e) => {
+        if (e.data?.type === 'ack' && !acked) {
+          acked = true;
+          card.innerHTML = '';
+          card.append(el('h2', {}, '✅ Antwort übergeben'), el('p', {}, 'Dein Spiel-Fenster verbindet sich jetzt. Du kannst diesen Tab schließen.'),
+            el('button', { onclick: () => window.close() }, 'Tab schließen'));
+        }
+      };
+      this.bus.postMessage({ type: 'answer', code });
+    }
+    setTimeout(() => {
+      if (acked) return;
+      card.innerHTML = '';
+      const url = this.answerUrl(code);
+      const cp = el('button', { class: 'primary', onclick: () => this.copyText(url, cp) }, '📋 Antwort-Link kopieren');
+      card.append(el('h2', {}, 'Kein offenes Spiel in diesem Browser gefunden'),
+        el('p', {}, 'Öffne Amino dort, wo du die Einladung erstellt hast, und füge den Antwort-Link in das Feld „Antwort-Link“ ein.'), el('div', { class: 'grp' }, el('input', { type: 'text', readonly: true, value: url, onfocus: (e) => e.target.select() }), cp),
+        el('button', { onclick: () => { this.renderSetup(); } }, 'Zum Menü'));
+    }, 1600);
   }
 
   async startFromSetup() {

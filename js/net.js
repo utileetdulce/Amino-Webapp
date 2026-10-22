@@ -1,33 +1,46 @@
-// Serverless multiplayer: WebRTC data channels, manual copy/paste signalling (no server involved).
-const RTC_CFG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+// Serverless multiplayer: WebRTC data channels. Signalling needs no server: the invite and the answer
+// are compressed into short codes that travel as links (?join=… / ?answer=…) or copy & paste.
+const RTC_CFG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
+
+const toB64u = (bytes) => {
+  let bin = '';
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const fromB64u = (s) => {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(s + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+};
 
 async function pack(obj) {
-  const json = JSON.stringify(obj);
-  const bytes = new TextEncoder().encode(json);
-  let out = bytes, prefix = 'p';
-  if (typeof CompressionStream !== 'undefined') {
-    const cs = new CompressionStream('deflate-raw');
-    const w = cs.writable.getWriter(); w.write(bytes); w.close();
-    out = new Uint8Array(await new Response(cs.readable).arrayBuffer()); prefix = 'z';
-  }
-  let bin = ''; out.forEach((b) => (bin += String.fromCharCode(b)));
-  return prefix + btoa(bin);
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  if (typeof CompressionStream === 'undefined') return 'p' + toB64u(bytes);
+  const cs = new CompressionStream('deflate-raw');
+  const w = cs.writable.getWriter(); w.write(bytes); w.close();
+  return 'z' + toB64u(new Uint8Array(await new Response(cs.readable).arrayBuffer()));
 }
-async function unpack(str) {
-  str = str.trim();
-  const prefix = str[0];
-  const bin = atob(str.slice(1));
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+
+// Accepts a bare code or a full link containing ?join=… / ?answer=…
+export function extractCode(str) {
+  str = (str || '').trim();
+  const m = str.match(/[?&](?:join|answer)=([A-Za-z0-9_-]+)/);
+  return m ? m[1] : str.replace(/\s+/g, '');
+}
+
+export async function unpack(str) {
+  const code = extractCode(str);
+  if (!code) throw new Error('leerer Code');
+  const bytes = fromB64u(code.slice(1));
   let out = bytes;
-  if (prefix === 'z') {
+  if (code[0] === 'z') {
     const ds = new DecompressionStream('deflate-raw');
     const w = ds.writable.getWriter(); w.write(bytes); w.close();
     out = new Uint8Array(await new Response(ds.readable).arrayBuffer());
-  }
+  } else if (code[0] !== 'p') throw new Error('ungültiger Code');
   return JSON.parse(new TextDecoder().decode(out));
 }
 
-function gatherComplete(pc, timeout = 5000) {
+function gatherComplete(pc, timeout = 4000) {
   return new Promise((res) => {
     if (pc.iceGatheringState === 'complete') return res();
     const t = setTimeout(res, timeout);
@@ -35,47 +48,60 @@ function gatherComplete(pc, timeout = 5000) {
   });
 }
 
-// One link between host and a guest.
-export class HostLink {
+class Link {
   constructor() {
     this.pc = new RTCPeerConnection(RTC_CFG);
-    this.dc = this.pc.createDataChannel('amino');
-    this.onMessage = () => {}; this.onOpen = () => {}; this.onClose = () => {};
-    this.open = false;
-    this.dc.onopen = () => { this.open = true; this.onOpen(); };
-    this.dc.onclose = () => { this.open = false; this.onClose(); };
-    this.dc.onmessage = (e) => this.onMessage(JSON.parse(e.data));
+    this.dc = null; this.open = false; this.state = 'new';
+    this.onMessage = () => {}; this.onOpen = () => {}; this.onClose = () => {}; this.onState = () => {};
+    this.pc.onconnectionstatechange = () => { this.state = this.pc.connectionState; this.onState(this.state); };
   }
-  async createInvite() {
-    await this.pc.setLocalDescription(await this.pc.createOffer());
-    await gatherComplete(this.pc);
-    return pack(this.pc.localDescription.toJSON());
-  }
-  async acceptAnswer(code) {
-    await this.pc.setRemoteDescription(await unpack(code));
+  wire(dc) {
+    this.dc = dc;
+    dc.onopen = () => { this.open = true; this.onOpen(); this.onState('connected'); };
+    dc.onclose = () => { this.open = false; this.onClose(); this.onState('closed'); };
+    dc.onmessage = (e) => this.onMessage(JSON.parse(e.data));
   }
   send(msg) { if (this.open) this.dc.send(JSON.stringify(msg)); }
   close() { try { this.pc.close(); } catch { /* ignore */ } }
 }
 
-export class GuestLink {
-  constructor() {
-    this.pc = new RTCPeerConnection(RTC_CFG);
-    this.dc = null; this.open = false;
-    this.onMessage = () => {}; this.onOpen = () => {}; this.onClose = () => {};
-    this.pc.ondatachannel = (e) => {
-      this.dc = e.channel;
-      this.dc.onopen = () => { this.open = true; this.onOpen(); };
-      this.dc.onclose = () => { this.open = false; this.onClose(); };
-      this.dc.onmessage = (ev) => this.onMessage(JSON.parse(ev.data));
-    };
+export class HostLink extends Link {
+  constructor(seat, tag) {
+    super();
+    this.seat = seat; this.tag = tag;
+    this.wire(this.pc.createDataChannel('amino'));
   }
-  async acceptInvite(code) {
-    await this.pc.setRemoteDescription(await unpack(code));
+  async createInvite() {
+    await this.pc.setLocalDescription(await this.pc.createOffer());
+    await gatherComplete(this.pc);
+    this.code = await pack({ k: 'offer', s: this.seat, g: this.tag, d: this.pc.localDescription.toJSON() });
+    return this.code;
+  }
+  async acceptAnswer(str) {
+    const m = await unpack(str);
+    if (m.k !== 'answer') throw new Error('Das ist kein Antwort-Code (Einladungs-Code erwischt?)');
+    if (m.g !== this.tag || m.s !== this.seat) throw new Error('Antwort gehört zu einer anderen Einladung');
+    await this.pc.setRemoteDescription(m.d);
+  }
+}
+
+export class GuestLink extends Link {
+  constructor() {
+    super();
+    this.pc.ondatachannel = (e) => this.wire(e.channel);
+  }
+  async acceptInvite(str) {
+    const m = await unpack(str);
+    if (m.k !== 'offer') throw new Error('Das ist kein Einladungs-Code (Antwort-Code erwischt?)');
+    await this.pc.setRemoteDescription(m.d);
     await this.pc.setLocalDescription(await this.pc.createAnswer());
     await gatherComplete(this.pc);
-    return pack(this.pc.localDescription.toJSON());
+    this.code = await pack({ k: 'answer', s: m.s, g: m.g, d: this.pc.localDescription.toJSON() });
+    return this.code;
   }
-  send(msg) { if (this.open) this.dc.send(JSON.stringify(msg)); }
-  close() { try { this.pc.close(); } catch { /* ignore */ } }
+}
+
+// Same-browser shortcut: an opened answer link hands its code to the host tab.
+export function openBus() {
+  try { return new BroadcastChannel('amino-signal'); } catch { return null; }
 }

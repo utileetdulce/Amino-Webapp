@@ -133,3 +133,12 @@ nav button { transition: background .15s; }
   .fists button { flex: 1; }
 }
 @media (hover: none) { .ctxmenu button { min-height: 46px; font-size: 16px; } }
+
+/* ---- matchmaking ---- */
+.invite { background: var(--bg); border-radius: 12px; padding: 10px; }
+.invite-status { font-weight: 600; margin: 2px 0 6px; }
+.invite input[type=text], .join input[type=text] { min-width: 0; width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
+.invite .grp input[type=text], .join .grp input[type=text] { flex: 1 1 220px; width: auto; }
+.small { font-size: 12px; margin: 6px 0 0; }
+button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
+.join .answer { margin-top: 10px; }

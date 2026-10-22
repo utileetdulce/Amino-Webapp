@@ -56,6 +56,7 @@ js/game.js       Spielcontroller      js/net.js      WebRTC-Signalisierung
 
 * Die genauen Wegemuster der sechs Dreieckstypen sind nachempfunden (Y, Kurve, Sackgasse, Gabel, 2 bzw. 3 getrennte Stummel; 50 Dreiecke).
 * Hügel-/Ressourcenfelder verbinden alle ihre Wege; Brücken verbinden zwei *benachbarte* Dreiecke; Ressourcen werden verdeckt gezogen.
+* **Hausregel (ohne Ausnahme):** Eine Ameise mit Ressource bewegt sich nur per Transport-Aktion mit Würfelwurf, nie durch normales Bewegen.
 * Spielende nach 90 Runden mit Punktevergleich (Schutz gegen Endlosspiele).
 
 Amino © Asis Hallab & Philipp Niederlag – diese Webapp ist eine unabhängige Umsetzung für private Zwecke.

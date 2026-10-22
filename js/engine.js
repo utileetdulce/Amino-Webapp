@@ -405,16 +405,13 @@ export function legalActions(s, full = false) {
     const interesting = interestingNodes(s, pi);
     const dests = [];
     for (const [n, d] of dist) if (d > 0) dests.push([n, d]);
-    if (full) {
+    if (p.carry >= 0) {
+      // house rule: with a resource the ant moves ONLY via the transport action (dice), never by a plain move
+    } else if (full) {
       for (const [n] of dests) acts.push({ t: 'move', to: n });
     } else {
       const chosen = new Set();
       for (const [n] of dests) if (interesting.has(n)) chosen.add(n);
-      if (p.carry >= 0) {
-        const hd = bfs(s, pi, hillCells(s, pi).map((h) => h * 3), { underground: false });
-        const sorted = dests.filter(([n]) => hd.has(n)).sort((a, b) => hd.get(a[0]) - hd.get(b[0]));
-        for (const [n] of sorted.slice(0, 3)) chosen.add(n);
-      }
       const stride = Math.max(1, Math.floor(dests.length / 6));
       for (let i = 0; i < dests.length; i += stride) chosen.add(dests[i][0]);
       for (const n of chosen) acts.push({ t: 'move', to: n });

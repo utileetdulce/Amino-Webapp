@@ -680,6 +680,7 @@ export class PlayUI {
     if (p.carry >= 0) {
       const k = s.resources[p.carry].kind;
       box.append(el('p', {}, `Trägt ${KIND_ICON[k]} ${KINDS[k]} (${p.values[k]} P).`, s.resources[p.carry].laidTurn === s.turnNo ? ' In diesem Zug gelegt – noch nicht transportierbar.' : ''));
+      box.append(el('p', { class: 'hint' }, '🎲 Mit Ressource bewegt sich die Ameise nur per Transport (Würfelwurf) – ohne Ausnahme. Normales Bewegen ist gesperrt, solange sie trägt.'));
       const here = s.cells[p.ant?.cell];
       if (here && here.hill === me) box.append(el('p', { class: 'hint' }, '🏠 Du stehst im eigenen Hügel. Die Ressource liegt noch auf dem Ameisenrücken – mit „Transport“ wird sie eingelagert und zählt.'));
     } else box.append(el('p', { class: 'muted' }, 'Die Ameise trägt nichts.'));

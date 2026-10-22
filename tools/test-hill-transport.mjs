@@ -12,11 +12,9 @@ for (let seed = 1; seed < 300 && ok < 10; seed++) {
   const mv = legalActions(s, true).find((x) => x.t === 'move' && s.cells[Math.floor(x.to / 3)].res >= 0);
   if (!mv) continue;
   applyAction(s, mv); applyAction(s, { t: 'load' });
-  // fast-forward: back to own hill, next own turn
   applyAction(s, { t: 'end' }); applyAction(s, { t: 'end' });
-  const back = legalActions(s, true).find((x) => x.t === 'move' && s.cells[Math.floor(x.to / 3)].hill === pi);
-  if (!back) continue;
-  applyAction(s, back);
+  // put the ant (carrying) into its hill directly, as if it got there by transport earlier
+  p.ant.cell = s.hills.find((h) => h.owner === pi).cell; p.ant.free = true;
   const t = legalActions(s, true).find((x) => x.t === 'transport' && !x.card);
   if (!t) continue;
   const before = score(s, pi);

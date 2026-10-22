@@ -158,6 +158,15 @@ export function antNode(s, pi) {
 }
 export const nodeCell = (n) => Math.floor(n / 3);
 
+// Start nodes for path searches. If the cell's paths changed under the ant (resource loaded, hill removed),
+// the ant may leave through any of the cell's path groups.
+export function antStarts(s, pi) {
+  const a = s.players[pi].ant;
+  if (!a) return [];
+  if (a.free) return nodesOfCell(s, a.cell);
+  return [antNode(s, pi)];
+}
+
 function nodesOfCell(s, cid) {
   const c = s.cells[cid];
   const out = [];
@@ -392,7 +401,7 @@ export function legalActions(s, full = false) {
   const node = antNode(s, pi);
   const cs = node >= 0 ? s.cells[nodeCell(node)] : null;
   if (node >= 0) {
-    const dist = bfs(s, pi, [node]);
+    const dist = bfs(s, pi, antStarts(s, pi));
     const interesting = interestingNodes(s, pi);
     const dests = [];
     for (const [n, d] of dist) if (d > 0) dests.push([n, d]);
@@ -426,7 +435,7 @@ export function legalActions(s, full = false) {
 
   // ant cards
   if (hasCard(p, 'bridge') && p.bridges > 0) {
-    const reach = node >= 0 ? bfs(s, pi, [node]) : new Map();
+    const reach = node >= 0 ? bfs(s, pi, antStarts(s, pi)) : new Map();
     const reachCells = new Set([...reach.keys()].map(nodeCell));
     let cnt = 0;
     for (const k in s.cells) {
@@ -514,7 +523,7 @@ function pendingActions(s, full) {
     case 'revenge': return [{ t: 'revenge' }, { t: 'decline' }];
     case 'tmove': {
       const node = antNode(s, pi);
-      const dist = bfs(s, pi, [node], { maxDepth: pd.n, underground: false });
+      const dist = bfs(s, pi, antStarts(s, pi), { maxDepth: pd.n, underground: false });
       const acts = [{ t: 'tstay' }];
       const hd = bfs(s, pi, hillCells(s, pi).map((h) => h * 3), { underground: false });
       const cands = [];
@@ -584,6 +593,7 @@ export function applyAction(s, a) {
       const i = s.hills.findIndex((h) => h.owner === pi && h.cell === a.cell);
       s.hills.splice(i, 1);
       s.cells[a.cell].hill = -1;
+      for (const q of s.players) if (q.ant && q.ant.cell === a.cell) q.ant.free = true;
       p.hillsInHand++;
       s.used.income = 1; break;
     }
@@ -615,12 +625,14 @@ export function applyAction(s, a) {
       const c = s.cells[p.ant.cell];
       const r = s.resources[c.res];
       r.carrier = pi; r.cell = -1; c.res = -1; p.carry = s.resources.indexOf(r);
+      for (const q of s.players) if (q.ant && q.ant.cell === c.id) q.ant.free = true;
       break;
     }
     case 'unload': {
       const c = s.cells[p.ant.cell];
       const r = s.resources[p.carry];
       r.carrier = -1; r.cell = c.id; c.res = p.carry; p.carry = -1;
+      for (const q of s.players) if (q.ant && q.ant.cell === c.id) q.ant.free = true;
       break;
     }
     case 'fight': {

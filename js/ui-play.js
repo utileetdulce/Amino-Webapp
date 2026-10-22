@@ -8,6 +8,8 @@ import { HostLink, GuestLink, openBus, unpack, extractCode } from './net.js';
 import { Net } from './nn.js';
 import { listModels, loadModel, loadPretrained } from './store.js';
 
+const CARD_ICON = { bridge: '🌉', superimpose: '🧩', blockage: '⛔', wings: '🪽', revenge: '🔥', transport: '🎲' };
+
 export const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const k in attrs) {
@@ -383,7 +385,7 @@ export class PlayUI {
     e.append(el('div', { class: 'big-icon' }, big.fists ? el('span', { class: 'fists' }, el('i', {}, big.fists[0] ? '🤜' : '🤛'), el('em', {}, 'vs'), el('i', {}, big.fists[1] ? '🤜' : '🤛')) : big.icon),
       el('div', { class: 'big-title' }, big.title), big.sub ? el('div', { class: 'big-sub' }, big.sub) : null);
     e.hidden = false;
-    this._bigT = setTimeout(() => this.hideBig(), this.ctrl?.fast ? 900 : 2400);
+    this._bigT = setTimeout(() => this.hideBig(), big.ms || (this.ctrl?.fast ? 900 : 2400));
   }
   hideBig() { clearTimeout(this._bigT); if (this.bigEl) this.bigEl.hidden = true; }
 
@@ -409,7 +411,8 @@ export class PlayUI {
     if (ev?.type === 'applied') {
       const { pre, post, seat } = ev;
       const local = this.ctrl.isLocalSeat(seat);
-      this.logLines.push(pre.text + (post.sub ? ' – ' + post.sub : ''));
+      const showCard = post.card && post.card !== 'x' && local;
+      this.logLines.push(pre.text + (post.sub ? ' – ' + post.sub : '') + (showCard ? ` – ${CARD_NAMES[post.card]}` : ''));
       if (this.logLines.length > 60) this.logLines.shift();
       const col = s.players[seat].color;
       if (!local && !this._announced) { this.caption({ ...pre, color: col }, post.sub, 3200); this.cameraFor(pre); }
@@ -417,6 +420,7 @@ export class PlayUI {
       this._announced = false;
       if (post.dice) this.board.rollDice({ cell: post.dice.cell, values: post.dice.values, card: post.dice.card });
       if (post.big) this.showBig(post.big);
+      else if (showCard) this.showBig({ icon: CARD_ICON[post.card], title: `Neue Karte: ${CARD_NAMES[post.card]}`, sub: CARD_HELP[post.card], kind: 'card', color: col, ms: 3600 });
     }
     this.skipBtn.hidden = s.over || this.myTurn() || this.ctrl.seats[actor(s)]?.kind !== 'ai';
     this.refresh();
@@ -595,7 +599,7 @@ export class PlayUI {
   paneIncome() {
     const s = this.ctrl.state, A = this.acts || [];
     const has = (t) => A.some((a) => a.t === t);
-    const dsp = (a) => this.ctrl.dispatch(a, actor(s));
+    const dsp = (a) => { this.tab = null; this.ctrl.dispatch(a, actor(s)); };
     const p = s.players[this.viewSeat()];
     const box = el('div', { class: 'opts' });
     box.append(this.turnHint());
@@ -791,7 +795,7 @@ export class PlayUI {
         return b;
       }));
       body.append(el('div', {}, 'Du gibst:'), mk(gs, give, (t) => (give = t)), el('div', {}, `Du nimmst (von ${s.players[q].name}):`), mk(ts, take, (t) => (take = t)));
-      body.append(el('button', { class: 'primary', disabled: give == null || take == null, onclick: () => { close(); this.ctrl.dispatch({ t: 'swap', q, give, take }, actor(s)); } }, 'Tauschen'), el('button', { onclick: close }, 'Abbrechen'));
+      body.append(el('button', { class: 'primary', disabled: give == null || take == null, onclick: () => { close(); this.tab = null; this.ctrl.dispatch({ t: 'swap', q, give, take }, actor(s)); } }, 'Tauschen'), el('button', { onclick: close }, 'Abbrechen'));
     };
     const body = el('div');
     box.append(body); m.append(box); draw();

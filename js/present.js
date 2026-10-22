@@ -87,6 +87,7 @@ export function describeResult(s, a, pi, before) {
     const res = s.resources[s.resources.length - 1];
     out.sub = `Gezogen: ${KIND_ICON[res.kind]} ${KINDS[res.kind]}`;
   }
+  if (a.t === 'inc_card') { const cs = s.players[pi].cards; out.card = cs[cs.length - 1]; }
   if (a.t === 'transport') {
     out.dice = { values: s.lastRoll, card: !!a.card, seat: pi, cell: antCell(s, pi) };
     const sum = (s.lastRoll[0] || 0) + (s.lastRoll[1] || 0);

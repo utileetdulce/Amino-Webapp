@@ -216,3 +216,4 @@ button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
 .tb.ok { background: #2f9e5b; }
 .tab.active, .tab.active:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
 .pane-head { cursor: pointer; user-select: none; } .pane-head .x { padding: 2px 8px; color: var(--muted); }
+.bigpop.card { background: linear-gradient(135deg, #fbf0c4, var(--card)); max-width: min(420px, calc(100% - 28px)); }

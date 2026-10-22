@@ -2,6 +2,7 @@
 import { legalActions, actor, hasCard } from './engine.js';
 import { buildCtx, stateFeatures, candidateMatrix, actionNumeric, AF } from './features.js';
 import { softmax, sampleIdx } from './nn.js';
+import { MCTS, pickByVisits } from './mcts.js';
 
 export const MAX_CANDS = 40;
 
@@ -136,6 +137,26 @@ export class NNAgent {
       this.recorder({ player: pi, s: sf, A, n: acts.length, a: idx, logp: Math.log(Math.max(p[idx], 1e-8)), v: this.net.forwardValue(sf) });
     }
     return acts[idx];
+  }
+}
+
+// search agent: network priors/values + PUCT tree search over determinized worlds
+export class MCTSAgent {
+  constructor(net, { sims = 64, timeMs = 0, tau = 0, maxDepth = 18, name = 'KI (Suche)' } = {}) {
+    this.mcts = new MCTS(net, { sims: Math.max(8, sims), timeMs, maxDepth });
+    this.tau = tau; this.name = name;
+  }
+  act(s, info = null) {
+    const acts = legalActions(s, false);
+    if (acts.length === 1) return acts[0];
+    const r = this.mcts.search(s, { noise: 0 });
+    const idx = pickByVisits(r.visits, this.tau);
+    if (info) {
+      const tot = r.visits.reduce((a, b) => a + b, 0) || 1;
+      info.acts = r.acts; info.probs = Float32Array.from(r.visits, (v) => v / tot); info.idx = idx; info.value = r.value;
+      const ctx = buildCtx(s, actor(s)); info.sf = stateFeatures(ctx); info.A = candidateMatrix(ctx, r.acts); info.search = true;
+    }
+    return r.acts[idx];
   }
 }
 

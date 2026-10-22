@@ -1,7 +1,7 @@
 // Game controller: owns the state, seats (human / AI / remote), AI stepping and network sync.
 import { newGame, applyAction, legalActions, actor, actionKey, viewFor, score } from './engine.js';
 import { describeRich, describeResult } from './present.js';
-import { RandomAgent, HeuristicAgent, NNAgent } from './agents.js';
+import { RandomAgent, HeuristicAgent, NNAgent, MCTSAgent } from './agents.js';
 
 export class GameController {
   // seats: [{kind:'human'|'ai'|'remote', ai:'random'|'heuristic'|'nn', name, link?}]
@@ -27,6 +27,7 @@ export class GameController {
   makeAgent(seat) {
     if (seat.kind !== 'ai') return null;
     if (seat.ai === 'random') return new RandomAgent();
+    if (seat.ai === 'mcts' && this.nets[seat.model]) return new MCTSAgent(this.nets[seat.model], { sims: seat.sims ?? 120, timeMs: seat.timeMs ?? 250 });
     if (seat.ai === 'nn' && this.nets[seat.model]) return new NNAgent(this.nets[seat.model], { sample: true, temperature: seat.temp ?? 0.5 });
     return new HeuristicAgent();
   }
@@ -95,7 +96,7 @@ export class GameController {
     const pi = actor(s);
     const ag = this.agents[pi];
     const info = {};
-    const a = ag instanceof NNAgent ? ag.act(s, info) : ag.act(s);
+    const a = ag instanceof NNAgent || ag instanceof MCTSAgent ? ag.act(s, info) : ag.act(s);
     this.lastAI = info.acts ? { seat: pi, ...info } : null;
     const pre = describeRich(s, a, pi);
     const humans = this.seats.some((x) => x.kind !== 'ai');

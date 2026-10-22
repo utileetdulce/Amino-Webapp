@@ -36,7 +36,7 @@ export async function modelNames() {
 }
 
 const KIND_OPTIONS = [
-  ['human', 'Mensch (an diesem Gerät)'], ['heuristic', 'KI · Heuristik'], ['random', 'KI · Zufall'], ['nn', 'KI · Neuronales Netz'], ['remote', 'Online-Mitspieler'],
+  ['human', 'Mensch (an diesem Gerät)'], ['heuristic', 'KI · Heuristik'], ['random', 'KI · Zufall'], ['nn', 'KI · Neuronales Netz'], ['mcts', 'KI · Netz + Baumsuche (MCTS)'], ['remote', 'Online-Mitspieler'],
 ];
 
 export class PlayUI {
@@ -76,7 +76,7 @@ export class PlayUI {
       row.append(el('span', { class: 'dot', style: `background:${PLAYER_COLORS[i]}` }), el('b', {}, PLAYER_COLOR_NAMES[i]));
       row.append(el('select', { onchange: (e) => { seat.kind = e.target.value; this.renderSetup(); } },
         KIND_OPTIONS.map(([v, l]) => el('option', { value: v, selected: v === seat.kind }, l))));
-      if (seat.kind === 'nn') {
+      if (seat.kind === 'nn' || seat.kind === 'mcts') {
         if (!this.models.length) row.append(el('span', { class: 'muted' }, 'kein Modell – im Training-Tab erzeugen'));
         else {
           if (!seat.model || !this.models.includes(seat.model)) seat.model = this.models[0];
@@ -252,10 +252,10 @@ export class PlayUI {
       else if (s.kind === 'remote') {
         if (!st.links[i]?.open) { alert(`Seat ${name}: Online-Mitspieler ist noch nicht verbunden.`); return; }
         seats.push({ kind: 'remote', name, link: st.links[i] });
-      } else if (s.kind === 'nn') {
+      } else if (s.kind === 'nn' || s.kind === 'mcts') {
         if (!s.model) { alert('Kein Modell verfügbar. Trainiere eines im Training-Tab.'); return; }
         if (!nets[s.model]) nets[s.model] = await getNetByName(s.model);
-        seats.push({ kind: 'ai', ai: 'nn', model: s.model, name: `${name} (KI)` });
+        seats.push({ kind: 'ai', ai: s.kind, model: s.model, name: `${name} (${s.kind === 'mcts' ? 'KI-Suche' : 'KI'})` });
       } else seats.push({ kind: 'ai', ai: s.kind, name: `${name} (${s.kind === 'random' ? 'Zufall' : 'KI'})` });
     }
     const hasRemote = seats.some((s) => s.kind === 'remote');

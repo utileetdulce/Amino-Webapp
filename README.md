@@ -33,6 +33,23 @@ Beide liefern HTTPS, das WebRTC-Multiplayer braucht.
 | Warmstart | optionales Behavior Cloning der Heuristik, danach PPO |
 | Reward | +1 Sieg / −1 Niederlage, optionales Shaping pro erzielten Punkt |
 
+### Baumsuche (MCTS, AlphaZero-Stil)
+
+`js/mcts.js` sucht vor jeder Entscheidung mit PUCT: das Netz liefert Aktions-Prioritäten (Policy) und eine Stellungsbewertung (Value), die Suche verbessert beides durch Vorausschau.
+Versteckte Informationen (Karten des Gegners, Stapel, die verdeckte Faust) werden pro Simulation per *Determinisierung* neu verteilt, Würfel/Ziehungen werden jedes Mal neu gewürfelt (Open-Loop-Baum).
+Im Spiel wählbar als „KI · Netz + Baumsuche (MCTS)“ (Zeitbudget ca. 250 ms pro Entscheidung).
+
+Training (Self-Play mit Such-Ergebnissen als Ziel: Policy = Besuchsverteilung, Value = Spielausgang), parallel auf allen CPU-Kernen:
+
+```bash
+# 1) optional: Netz per PPO vorwärmen (schnell)        node tools/train-cli.mjs --minutes 20 --out models/pretrained.json
+# 2) AlphaZero-Schleife, z. B. auf einem MacBook M4:
+node tools/train-az.mjs --init models/pretrained.json --out models/az.json --sims 96 --games 40 --workers 9 --minutes 240
+node tools/mcts-bench.mjs models/az.json 96 20      # Suche vs. Heuristik messen
+```
+
+Wichtige Optionen: `--sims` (Simulationen pro Zug), `--games` (Selbstspiele je Iteration), `--steps/--batch/--lr` (Updates), `--buffer` (Replay-Größe), `--eval-every/--eval-games`, `--opp-mix` (Anteil Spiele gegen die Heuristik zur Stabilisierung), `--resume` (Zähler fortführen). Es wird laufend `models/az.json` und der beste Stand als `models/az.best.json` gespeichert – beide lassen sich im Training-Tab importieren und im Spiel auswählen.
+
 Headless-Training (z. B. für ein stärkeres Modell):
 
 ```bash

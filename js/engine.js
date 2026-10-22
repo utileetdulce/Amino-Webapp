@@ -104,6 +104,21 @@ export function newGame({ numPlayers = 2, seed = (Math.random() * 2 ** 31) | 0, 
 
 export const cloneState = (s) => JSON.parse(JSON.stringify(s));
 
+// Fast structural copy for search (≈10x faster than JSON). Immutable sub-objects are shared; the log is dropped.
+export function fastClone(s) {
+  const c = { ...s };
+  c.cells = {};
+  for (const k in s.cells) c.cells[k] = { ...s.cells[k] };
+  c.players = s.players.map((p) => ({ ...p, hand: p.hand.slice(), cards: p.cards.slice(), ant: p.ant ? { ...p.ant } : null }));
+  c.tileStack = s.tileStack.slice(); c.resStack = s.resStack.slice(); c.cardStack = s.cardStack.slice();
+  c.resources = s.resources.map((r) => ({ ...r }));
+  c.hills = s.hills.slice(); c.blocks = s.blocks.slice(); c.bridges = s.bridges.slice();
+  c.used = { ...s.used };
+  c.pending = s.pending ? { ...s.pending, overlays: s.pending.overlays ? s.pending.overlays.slice() : undefined } : null;
+  c.log = [];
+  return c;
+}
+
 function startTurn(s) {
   const p = s.players[s.cur];
   s.turnNo++;

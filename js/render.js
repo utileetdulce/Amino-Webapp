@@ -63,7 +63,7 @@ export class BoardView {
     this._drag = null;
     this.focusSeat = -1;
     this.autoFit = true;
-    this.insetBottom = 0; this.cam = null; this.fx = []; this._raf = 0;
+    this.insetBottom = 0; this.insetTop = 0; this.cam = null; this.fx = []; this._raf = 0;
     this.cardView = false;
     this._bind();
     this._ro = new ResizeObserver(() => this.resize());
@@ -95,10 +95,11 @@ export class BoardView {
       }
     }
     minx -= 2; maxx += 2; miny -= 2; maxy += 2; // room for ghosts
-    const sc = Math.min(this.w / (maxx - minx), this.h / (maxy - miny), 90);
+    const vh = Math.max(120, this.h - this.insetBottom - this.insetTop);
+    const sc = Math.min(this.w / (maxx - minx), vh / (maxy - miny), 90);
     this.scale = Math.max(34, sc);
     this.ox = this.w / 2 - ((minx + maxx) / 2) * this.scale;
-    this.oy = this.h / 2 - ((miny + maxy) / 2) * this.scale;
+    this.oy = this.insetTop + vh / 2 - ((miny + maxy) / 2) * this.scale;
     this.draw();
   }
   tx(x) { return this.ox + x * this.scale; }
@@ -187,10 +188,10 @@ export class BoardView {
     if (!cells.length) cells = this.allCells();
     if (!cells.length) return;
     const b = this.bboxOf(cells, pad);
-    const vh = Math.max(120, this.h - this.insetBottom);
+    const vh = Math.max(120, this.h - this.insetBottom - this.insetTop);
     const scale = Math.max(minScale, Math.min(maxScale, this.w / (b.maxx - b.minx), vh / (b.maxy - b.miny)));
     const ox = this.w / 2 - ((b.minx + b.maxx) / 2) * scale;
-    const oy = vh / 2 - ((b.miny + b.maxy) / 2) * scale;
+    const oy = this.insetTop + vh / 2 - ((b.miny + b.maxy) / 2) * scale;
     this.autoFit = false;
     this.cam = { t0: performance.now(), ms, from: [this.ox, this.oy, this.scale], to: [ox, oy, scale] };
     this.kick();

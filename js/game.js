@@ -48,6 +48,12 @@ export class GameController {
     this.apply(a, seat);
     return true;
   }
+  // several actions in a row (e.g. auto-move + attack); stops at the first illegal one
+  dispatchSeq(list, seat) {
+    if (this.mode === 'client') { this.link.send({ type: 'actions', actions: list }); return true; }
+    for (const a of list) if (!this.dispatch(a, seat)) return false;
+    return true;
+  }
   apply(a, seat, pre = null) {
     const s = this.state;
     pre = pre || describeRich(s, a, seat);
@@ -114,6 +120,7 @@ export class GameController {
   }
   receiveFromClient(seat, msg) {
     if (msg.type === 'action') this.dispatch(msg.action, seat);
+    else if (msg.type === 'actions') this.dispatchSeq(msg.actions, seat);
     else if (msg.type === 'hello') this.broadcast();
   }
   destroy() { this.destroyed = true; this.waiting?.done(); this.listeners = []; }

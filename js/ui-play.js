@@ -1,5 +1,5 @@
 // Play tab: setup screen, multiplayer lobby, and the interactive game UI.
-import { legalActions, actor, score, TILE_TYPES, PLAYER_COLORS, PLAYER_COLOR_NAMES, KINDS, WIN_POINTS, winnerText, hasCard } from './engine.js';
+import { legalActions, actor, score, TILE_TYPES, PLAYER_COLORS, PLAYER_COLOR_NAMES, KINDS, WIN_POINTS, winnerText, hasCard, cloneState, applyAction, bfs, antStarts, nodeCell } from './engine.js';
 import { BoardView, drawTilePreview, KIND_ICON } from './render.js';
 import { cellX, cellY, cellId } from './geometry.js';
 import { GameController } from './game.js';
@@ -297,7 +297,9 @@ export class PlayUI {
     this.bigEl = el('div', { class: 'bigpop', hidden: true });
     boardWrap.append(this.ctxMenu, this.capEl, this.bigEl);
     this.boardWrap = boardWrap;
-    this.sheetOpen = false; this.pp = null;
+    this.hud = el('div', { class: 'hud' });
+    boardWrap.append(this.hud);
+    this.tab = window.matchMedia('(max-width: 860px)').matches ? null : 'income'; this.pp = null;
     this.skipBtn = el('button', { class: 'skipbtn', hidden: true, title: 'Weiter (Leertaste / Klick auf das Brett)', onclick: () => this.skipAI() }, '⏭ Weiter');
     boardWrap.append(el('div', { class: 'board-tools' }, this.skipBtn,
       el('button', { onclick: () => { this.board.autoFit = true; this.board.flyToAll({ ms: 500 }); }, title: 'Ansicht einpassen' }, '⤢'),
@@ -376,7 +378,7 @@ export class PlayUI {
     const c = this.ctrl;
     if (!c.cinematic || c.fast || !this.board) return;
     const b = this.board;
-    this.board.insetBottom = this.isMobile() ? (this.sheetOpen ? this.board.h * 0.55 : 150) : 0;
+    this.board.insetBottom = this.isMobile() ? this.side.offsetHeight : 0;
     const nextLocal = pre.nextSeat != null && c.isLocalSeat(pre.nextSeat);
     if (pre.overview || !pre.focus.length) { if (pre.overview && (nextLocal || !c.state.over)) b.flyToAll({ ms: 600 }); return; }
     b.flyTo(pre.focus, { ms: 700, maxScale: pre.zoom === 'tight' ? 130 : 105, minScale: 48, pad: pre.zoom === 'tight' ? 1.6 : 1.4 });
@@ -425,6 +427,9 @@ export class PlayUI {
     if (this.selTile == null && hand.length && (this.mode === 'place' || this.mode === 'overlay')) this.selTile = hand[0];
     this.hideCtx();
     this.renderSide();
+    this.board.insetTop = this.isMobile() ? 100 : 0;
+    this.boardWrap.style.setProperty('--sideh', (this.isMobile() ? this.side.offsetHeight : 0) + 'px');
+    this.renderHud();
     this.renderModal();
     this.updateBoardMode();
     this.board.focusSeat = me;
@@ -464,133 +469,285 @@ export class PlayUI {
     this.banner.style.borderColor = s.over ? '#444' : PLAYER_COLORS[actor(s)];
   }
 
-  // ---- side panel ----
+  // ---- side panel: tabs ("Reiter") per action plan + always-visible end-turn button ----
+  setTab(id) {
+    this.tab = this.tab === id ? null : id;
+    this.bridgeFirst = null;
+    if (this.tab === 'place') { this.mode = this.ctrl.state.pending?.type === 'super' ? 'overlay' : 'place'; }
+    else if (this.mode === 'place' || (this.mode === 'overlay' && !this.ctrl.state.pending)) this.mode = null;
+    if (this.tab !== 'move' && this.mode === 'move') this.mode = null;
+    this.pp = null;
+    this.refresh();
+  }
+
+  seq(list) { this.ctrl.dispatchSeq(list, actor(this.ctrl.state)); }
+
+  // simulate a chain of actions on a copy; returns the steps or null when impossible
+  plan(build) {
+    const sim = cloneState(this.ctrl.state);
+    const steps = [];
+    const find = (t, f = () => true) => legalActions(sim, true).find((a) => a.t === t && f(a));
+    const run = (a) => { applyAction(sim, a); steps.push(a); return true; };
+    return build({ sim, find, run, steps }) ? steps : null;
+  }
+  planAttack(q, fly = false) {
+    const me = this.viewSeat();
+    return this.plan(({ sim, find, run, steps }) => {
+      const qc = sim.players[q].ant.cell;
+      if (sim.players[me].carry >= 0) { const u = find('unload'); if (!u) return false; run(u); }
+      if (fly) { if (sim.players[me].ant.cell !== qc) { const w = find('wings', (a) => Math.floor(a.to / 3) === qc); if (!w) return false; run(w); } }
+      else if (sim.players[me].ant.cell !== qc) { const mv = find('move', (a) => Math.floor(a.to / 3) === qc); if (!mv) return false; run(mv); }
+      const f = find('fight', (a) => a.q === q);
+      if (!f) return false;
+      steps.push(f); return true;
+    });
+  }
+  planCollect(cell) {
+    const me = this.viewSeat();
+    return this.plan(({ sim, find, run }) => {
+      if (sim.players[me].carry >= 0) return false;
+      if (sim.players[me].ant.cell !== cell) { const mv = find('move', (a) => Math.floor(a.to / 3) === cell); if (!mv) return false; run(mv); }
+      const l = find('load');
+      if (!l) return false;
+      run(l); return true;
+    });
+  }
+  attackTargets() {
+    const s = this.ctrl.state, me = this.viewSeat(), p = s.players[me];
+    if (!this.myTurn() || s.pending || !p.ant || s.used.fight) return [];
+    const dist = bfs(s, me, antStarts(s, me));
+    const cellDist = new Map();
+    for (const [n, d] of dist) { const c = nodeCell(n); if (!cellDist.has(c) || cellDist.get(c) > d) cellDist.set(c, d); }
+    const out = [];
+    for (const q of s.players) {
+      if (q.idx === me || !q.ant || q.carry < 0) continue;
+      const steps = this.planAttack(q.idx);
+      const fly = steps ? null : (hasCard(p, 'wings') || p.cards.length >= 2 ? this.planAttack(q.idx, true) : null);
+      if (!steps && !fly) continue;
+      const kind = s.resources[q.carry].kind;
+      out.push({ q: q.idx, kind, steps, fly, dist: cellDist.get(q.ant.cell) ?? 0, unload: p.carry >= 0 });
+    }
+    return out;
+  }
+
   renderSide() {
     const c = this.ctrl, s = c.state;
     const me = this.viewSeat();
     const side = this.side;
     side.innerHTML = '';
-    side.classList.toggle('open', !!this.sheetOpen);
-    side.append(el('button', { class: 'sheet-handle', onclick: () => { this.sheetOpen = !this.sheetOpen; this.renderSide(); } },
-      el('span', { class: 'grip' }), this.sheetOpen ? 'Menü schließen' : `Aktionen & Hand (▲${s.players[this.viewSeat()].hand.length})`));
-    // players
-    const pl = el('div', { class: 'players' });
-    for (const p of s.players) {
-      const sc = score(s, p.idx);
-      const store = [0, 1, 2].map((k) => {
-        const n = s.resources.filter((r) => r.owner === p.idx && r.kind === k).length;
-        return el('span', { class: 'chip', title: `${KINDS[k]} = ${p.values[k]} P` }, KIND_ICON[k], `×${n}`, el('sub', {}, `${p.values[k]}P`));
-      });
-      const row = el('div', { class: 'player' + (actor(s) === p.idx && !s.over ? ' active' : '') + (p.idx === me ? ' me' : ''), style: `--pc:${p.color}` },
-        el('div', { class: 'ph' }, el('span', { class: 'dot', style: `background:${p.color}` }), el('b', {}, p.name), el('span', { class: 'score' }, `${sc}/${WIN_POINTS}`)),
-        el('div', { class: 'pm' }, store, el('span', { class: 'chip', title: 'Dreiecke auf der Hand' }, '▲', p.hand.length), el('span', { class: 'chip', title: 'Ameisenkarten' }, '🃏', p.cards.length),
-          el('span', { class: 'chip', title: 'Hügel/Ameise' }, '⛰', 2 - p.hillsInHand, p.carry >= 0 ? el('span', {}, ' 🐜', KIND_ICON[s.resources[p.carry].kind]) : '')));
-      pl.append(row);
-    }
-    side.append(pl);
-
     const mine = this.myTurn();
     const A = this.acts || [];
-    const has = (t, f = () => true) => A.some((a) => a.t === t && f(a));
-    const me_p = s.players[me];
     const pd = s.pending;
+    if (mine && pd) { if (pd.type === 'tmove') this.tab = 'move'; if (pd.type === 'super') this.tab = 'place'; }
+    side.classList.toggle('open', !!this.tab);
+    const has = (t, f = () => true) => A.some((a) => a.t === t && f(a));
+    const p = s.players[me];
+    const targets = this.tab === 'attack' || mine ? this.attackTargets() : [];
+    this._targets = targets;
 
-    // hand tiles
-    const handBox = el('div', { class: 'card' });
-    handBox.append(el('h3', {}, `Hand von ${me_p.name}`));
+    const badge = {
+      income: !mine ? '' : s.used.income ? '✓' : '!',
+      place: p.hand.length || '',
+      attack: targets.length || '',
+      move: p.carry >= 0 ? KIND_ICON[s.resources[p.carry].kind] : (has('transport') ? '🎲' : ''),
+      cards: p.cards.length || '',
+      log: '',
+    };
+    const TABS = [['income', '📥', 'Einnahme'], ['place', '🔺', 'Auslegen'], ['attack', '⚔️', 'Angriff'], ['move', '🐜', 'Bewegen'], ['cards', '🃏', 'Karten'], ['log', '📜', 'Verlauf']];
+    const rail = el('div', { class: 'rail', role: 'tablist' });
+    for (const [id, icon, label] of TABS) {
+      rail.append(el('button', { class: 'tab' + (this.tab === id ? ' active' : '') + (id === 'income' && mine && !s.used.income ? ' attn' : '') + (id === 'attack' && targets.length ? ' hot' : ''), role: 'tab', title: label, onclick: () => this.setTab(id) },
+        el('span', { class: 'ti' }, icon), el('span', { class: 'tl' }, label), badge[id] !== '' && badge[id] != null ? el('span', { class: 'tb' + (badge[id] === '✓' ? ' ok' : '') }, String(badge[id])) : null));
+    }
+    rail.append(el('button', { class: 'endbtn', disabled: !has('end'), title: 'Runde beenden', onclick: () => { this.mode = null; this.pp = null; this.ctrl.dispatch({ t: 'end' }, actor(s)); } },
+      el('span', { class: 'ti' }, '⏭'), el('span', { class: 'tl' }, 'Runde beenden')));
+
+    const pane = el('div', { class: 'pane' });
+    if (this.tab) {
+      const builders = { income: () => this.paneIncome(), place: () => this.panePlace(), attack: () => this.paneAttack(), move: () => this.paneMove(), cards: () => this.paneCards(), log: () => this.paneLog() };
+      pane.append(el('div', { class: 'pane-head' }, el('b', {}, TABS.find((t) => t[0] === this.tab)[2]), el('button', { class: 'x', title: 'Einklappen', onclick: () => this.setTab(this.tab) }, '✕')));
+      pane.append(builders[this.tab]());
+    }
+    side.append(pane, rail);
+  }
+
+  opt(icon, title, sub, enabled, fn, cls = '') {
+    return el('button', { class: 'opt ' + cls, disabled: !enabled, onclick: fn }, el('span', { class: 'oi' }, icon), el('span', { class: 'ot' }, el('b', {}, title), sub ? el('small', {}, sub) : null));
+  }
+  turnHint() {
+    if (this.myTurn()) return el('span');
+    return el('p', { class: 'muted' }, 'Du bist gerade nicht am Zug.');
+  }
+
+  paneIncome() {
+    const s = this.ctrl.state, A = this.acts || [];
+    const has = (t) => A.some((a) => a.t === t);
+    const dsp = (a) => this.ctrl.dispatch(a, actor(s));
+    const p = s.players[this.viewSeat()];
+    const box = el('div', { class: 'opts' });
+    box.append(this.turnHint());
+    box.append(el('small', { class: 'muted' }, s.used.income ? '✓ Einkommen für diesen Zug schon genommen.' : 'Wähle eine Einnahme (1× pro Zug):'));
+    box.append(this.opt('🔺', '4 Dreiecke', `Stapel: ${s.tileStack.length}`, has('inc_tiles'), () => dsp({ t: 'inc_tiles' })));
+    box.append(this.opt('🃏', 'Ameisenkarte', `Stapel: ${s.cardStack.length}`, has('inc_card'), () => dsp({ t: 'inc_card' })));
+    box.append(this.opt('⛰', 'Hügel zurücknehmen', `${2 - p.hillsInHand} Hügel liegen auf dem Brett`, has('inc_hill'), () => this.pickHill()));
+    box.append(el('hr'));
+    box.append(this.opt('🔄', 'Dreieck tauschen', s.used.swap ? 'schon benutzt' : '1× pro Zug – gegen ein Dreieck eines Gegners', has('swap'), () => this.swapDialog()));
+    return box;
+  }
+
+  panePlace() {
+    const s = this.ctrl.state, me = this.viewSeat(), p = s.players[me], pd = s.pending;
+    const mine = this.myTurn();
+    const box = el('div', { class: 'opts' });
+    box.append(this.turnHint());
+    if (pd?.type === 'super') {
+      box.append(el('p', {}, '🧩 Überlagern: Wähle ein Dreieck und tippe auf ein freies, noch nicht überlagertes Feld. Am Ende müssen alle Kanten passen.'));
+      box.append(el('div', { class: 'grp' }, el('button', { class: 'primary', disabled: !(this.acts || []).some((a) => a.t === 'sdone'), onclick: () => this.ctrl.dispatch({ t: 'sdone' }, actor(s)) }, '✔ Fertig'),
+        el('button', { disabled: !(this.acts || []).some((a) => a.t === 'sundo'), onclick: () => this.ctrl.dispatch({ t: 'sundo' }, actor(s)) }, '↺ Zurücksetzen')));
+    } else box.append(el('small', { class: 'muted' }, 'Wähle ein Dreieck, dann ein hervorgehobenes Feld auf dem Brett. Dort kannst du Dreieck, Drehung und Beilage noch ändern.'));
     const tiles = el('div', { class: 'tiles' });
     const counts = {};
-    me_p.hand.forEach((t) => (counts[t] = (counts[t] || 0) + 1));
+    p.hand.forEach((t) => (counts[t] = (counts[t] || 0) + 1));
     for (const t of Object.keys(counts).map(Number).sort()) {
       const cv = el('canvas', { class: 'tilecv' });
-      const btn = el('button', {
-        class: 'tile' + (this.selTile === t ? ' sel' : ''), title: TILE_TYPES[t].name, disabled: !mine,
-        onclick: () => { this.selTile = t; if (this.mode !== 'overlay') this.mode = 'place'; this.closeSheet(); this.refresh(); },
-      }, cv, el('span', { class: 'cnt' }, '×' + counts[t]));
-      tiles.append(btn);
+      tiles.append(el('button', { class: 'tile' + (this.selTile === t ? ' sel' : ''), title: TILE_TYPES[t].name, disabled: !mine, onclick: () => { this.selTile = t; if (this.mode !== 'overlay') this.mode = 'place'; this.closeSheet(); this.refresh(); } }, cv, el('span', { class: 'cnt' }, '×' + counts[t])));
       drawTilePreview(cv, t, this.rot % 3, { color: this.selTile === t ? '#9fc58a' : '#8db37a' });
     }
-    if (!me_p.hand.length) tiles.append(el('span', { class: 'muted' }, 'keine Dreiecke'));
-    handBox.append(tiles);
-    if (this.mode === 'place' || this.mode === 'overlay') {
-      const piece = el('div', { class: 'pieces' });
-      if (this.mode === 'place') {
-        for (const [v, l, ok] of [[0, 'Nur Dreieck', true], [1, `⛰ Hügel (${me_p.hillsInHand})`, me_p.hillsInHand > 0], [2, `❔ Ressource (${s.resStack.length})`, s.resStack.length > 0]]) {
-          piece.append(el('label', {}, el('input', { type: 'radio', name: 'piece', checked: this.piece === v, disabled: !ok, onchange: () => { this.piece = v; this.refresh(); } }), l));
-        }
+    if (!p.hand.length) tiles.append(el('span', { class: 'muted' }, 'Keine Dreiecke – hole dir Einnahme.'));
+    box.append(tiles);
+    if (this.mode !== 'overlay') {
+      const pieces = el('div', { class: 'pieces' });
+      for (const [v, l, ok] of [[0, 'Nur Dreieck', true], [1, `⛰ Hügel (${p.hillsInHand})`, p.hillsInHand > 0], [2, `❔ Ressource (${s.resStack.length})`, s.resStack.length > 0]]) {
+        pieces.append(el('label', {}, el('input', { type: 'radio', name: 'piece', checked: this.piece === v, disabled: !ok, onchange: () => { this.piece = v; this.refresh(); } }), l));
       }
-      piece.append(el('button', { onclick: () => this.rotate(1) }, '⟳ Drehen (R / Rechtsklick)'));
-      handBox.append(piece);
+      box.append(pieces);
     }
-    side.append(handBox);
+    box.append(el('button', { onclick: () => this.rotate(1) }, '⟳ Drehen (R / Rechtsklick)'));
+    return box;
+  }
 
-    // actions
-    const act = el('div', { class: 'card actions' });
-    const btn = (label, enabled, fn, cls = '', title = '') => el('button', { class: cls, disabled: !enabled, title, onclick: fn }, label);
+  paneAttack() {
+    const s = this.ctrl.state, me = this.viewSeat(), p = s.players[me];
+    const box = el('div', { class: 'opts' });
+    box.append(this.turnHint());
+    if (s.used.fight) box.append(el('small', { class: 'muted' }, '✓ Angriff in diesem Zug schon benutzt.'));
+    const list = this._targets || [];
+    if (!list.length) box.append(el('p', { class: 'muted' }, 'Kein erreichbarer Gegner mit Ressource. Nur Ameisen, die eine Ressource tragen und zu denen ein Weg führt, sind wählbar.'));
+    for (const t of list) {
+      const q = s.players[t.q];
+      const row = el('div', { class: 'target', style: `--pc:${q.color}` });
+      row.append(el('div', { class: 'th' }, el('span', { class: 'dot', style: `background:${q.color}` }), el('b', {}, q.name), el('span', { class: 'tr' }, `${KIND_ICON[t.kind]} ${KINDS[t.kind]} · ${p.values[t.kind]} P für dich`)));
+      const how = t.steps ? [t.unload ? 'legt deine Ressource ab' : null, t.dist ? `läuft ${t.dist} Feld${t.dist > 1 ? 'er' : ''}` : 'steht schon dort', 'greift an'] : ['fliegt (Flügel-Karte)', 'greift an'];
+      row.append(el('small', {}, how.filter(Boolean).join(' → ')));
+      row.append(el('div', { class: 'grp' },
+        t.steps ? el('button', { class: 'primary', onclick: () => { this.tab = null; this.seq(t.steps); } }, '⚔ Angreifen') : null,
+        t.fly ? el('button', { class: t.steps ? '' : 'primary', onclick: () => { this.tab = null; this.seq(t.fly); } }, '🪽 per Flügel') : null));
+      box.append(row);
+    }
+    box.append(el('small', { class: 'muted' }, 'Die Ameise läuft automatisch zum Gegner. Der Verteidiger versteckt die Ressource in einer Faust, du tippst.'));
+    return box;
+  }
+
+  paneMove() {
+    const s = this.ctrl.state, me = this.viewSeat(), p = s.players[me], pd = s.pending;
+    const A = this.acts || [];
+    const has = (t, f = () => true) => A.some((a) => a.t === t && f(a));
     const dsp = (a) => this.ctrl.dispatch(a, actor(s));
-    act.append(el('h3', {}, 'Aktionen'));
-    if (pd && pd.type === 'tmove') act.append(btn('Stehen bleiben', mine, () => dsp({ t: 'tstay' })));
-    else if (pd && pd.type === 'super') {
-      act.append(btn('✔ Fertig', has('sdone'), () => dsp({ t: 'sdone' }), 'primary'), btn('↺ Zurücksetzen', has('sundo'), () => dsp({ t: 'sundo' })));
-    } else if (!pd) {
-      const g1 = el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Einkommen'));
-      g1.append(btn('4 Dreiecke', has('inc_tiles'), () => dsp({ t: 'inc_tiles' })), btn('Ameisenkarte', has('inc_card'), () => dsp({ t: 'inc_card' })),
-        btn('Hügel zurück', has('inc_hill'), () => this.pickHill()), btn('Tauschen', has('swap'), () => this.swapDialog()));
-      const g2 = el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Ameise'));
-      g2.append(btn('Bewegen', has('move'), () => { this.mode = 'move'; this.closeSheet(); this.refresh(); }, this.mode === 'move' ? 'on' : ''),
-        btn('Aufladen', has('load'), () => dsp({ t: 'load' })), btn('Abladen', has('unload'), () => dsp({ t: 'unload' })),
-        btn('⚔ Angreifen', has('fight'), () => dsp(A.find((a) => a.t === 'fight'))),
-        btn('🎲 Transport', has('transport', (a) => !a.card), () => dsp({ t: 'transport', card: 0 })),
-        btn('🎲🎲 Transport (Karte)', has('transport', (a) => a.card), () => dsp({ t: 'transport', card: 1 })));
-      const g3 = el('div', { class: 'grp' }, el('span', { class: 'lbl' }, 'Karten'));
-      const wingsOk = has('wings');
-      g3.append(
-        btn('Brücke', has('bridge'), () => { this.mode = 'bridge'; this.bridgeFirst = null; this.closeSheet(); this.refresh(); }, this.mode === 'bridge' ? 'on' : '', CARD_HELP.bridge),
-        btn('Blockade', has('blockage'), () => { this.mode = 'blockage'; this.closeSheet(); this.refresh(); }, this.mode === 'blockage' ? 'on' : '', CARD_HELP.blockage),
-        btn('Flügel', wingsOk, () => { this.mode = 'wings'; this.closeSheet(); this.refresh(); }, this.mode === 'wings' ? 'on' : '', CARD_HELP.wings + (A.some((a) => a.t === 'wings' && a.via) ? ' (nutzt 2 andere Karten)' : '')),
-        btn('Überlagern', has('super'), () => dsp({ t: 'super' }), '', CARD_HELP.superimpose));
-      act.append(g1, g2, g3, el('div', { class: 'grp' }, btn('Zug beenden ▶', has('end'), () => { this.mode = null; dsp({ t: 'end' }); }, 'primary')));
-    } else if (mine) act.append(el('span', { class: 'muted' }, 'Bitte im Dialog entscheiden.'));
-    side.append(act);
-
-    // cards
-    const cardsBox = el('div', { class: 'card' });
-    cardsBox.append(el('h3', {}, 'Ameisenkarten'));
-    const cl = el('div', { class: 'cardlist' });
-    me_p.cards.forEach((t) => cl.append(el('span', { class: 'acard', title: CARD_HELP[t] || '' }, CARD_NAMES[t])));
-    if (!me_p.cards.length) cl.append(el('span', { class: 'muted' }, 'keine'));
-    cardsBox.append(cl);
-    side.append(cardsBox);
-
-    // AI inspector
-    if (c.lastAI) {
-      const L = c.lastAI;
-      const box = el('div', { class: 'card inspector' });
-      box.append(el('h3', {}, `KI-Entscheidung (${s.players[L.seat].name}) · Wertschätzung V=${L.value.toFixed(2)}`));
-      const order = [...L.probs.keys()].sort((a, b) => L.probs[b] - L.probs[a]).slice(0, 5);
-      for (const i of order) {
-        box.append(el('div', { class: 'bar' + (i === L.idx ? ' chosen' : '') },
-          el('i', { style: `width:${(L.probs[i] * 100).toFixed(0)}%` }), el('span', {}, `${candidateText(L.acts[i], s)} · ${(L.probs[i] * 100).toFixed(0)}%`)));
-      }
-      side.append(box);
+    const box = el('div', { class: 'opts' });
+    box.append(this.turnHint());
+    if (pd?.type === 'tmove') {
+      box.append(el('p', {}, `🎲 Wurf: ${s.lastRoll?.[1] != null ? s.lastRoll[0] + ' + ' + s.lastRoll[1] : s.lastRoll?.[0]} – tippe auf ein hervorgehobenes Feld (≤ ${pd.n} Dreiecke) oder in den Hügel.`));
+      box.append(el('button', { onclick: () => dsp({ t: 'tstay' }) }, 'Stehen bleiben'));
+      return box;
     }
+    if (p.carry >= 0) {
+      const k = s.resources[p.carry].kind;
+      box.append(el('p', {}, `Trägt ${KIND_ICON[k]} ${KINDS[k]} (${p.values[k]} P).`, s.resources[p.carry].laidTurn === s.turnNo ? ' In diesem Zug gelegt – noch nicht transportierbar.' : ''));
+    } else box.append(el('p', { class: 'muted' }, 'Die Ameise trägt nichts.'));
+    box.append(this.opt('🎲', 'Transport', s.used.transport ? 'schon benutzt' : 'Würfel (0–5): so weit Richtung Hügel', has('transport', (a) => !a.card), () => dsp({ t: 'transport', card: 0 }), 'big'));
+    if (hasCard(p, 'transport')) box.append(this.opt('🎲🎲', 'Transport mit Karte', 'zwei Würfel', has('transport', (a) => a.card), () => dsp({ t: 'transport', card: 1 })));
+    box.append(el('hr'));
+    box.append(this.opt('🐜', 'Ameise bewegen', 'dann Zielfeld auf dem Brett antippen', has('move'), () => { this.mode = this.mode === 'move' ? null : 'move'; this.closeSheet(); this.refresh(); }, this.mode === 'move' ? 'on' : ''));
+    const row = el('div', { class: 'grp' }, el('button', { disabled: !has('load'), onclick: () => dsp({ t: 'load' }) }, '⬆ Aufladen'), el('button', { disabled: !has('unload'), onclick: () => dsp({ t: 'unload' }) }, '⬇ Abladen'));
+    box.append(row);
+    // quick collect
+    if (this.myTurn() && !pd && p.carry < 0 && p.ant) {
+      const items = [];
+      for (const r of s.resources) {
+        if (r.owner >= 0 || r.carrier >= 0 || r.cell < 0) continue;
+        const steps = this.planCollect(r.cell);
+        if (steps) items.push({ r, steps });
+      }
+      if (items.length) {
+        box.append(el('small', { class: 'muted' }, 'Freie Ressourcen in Reichweite:'));
+        for (const { r, steps } of items) box.append(this.opt(KIND_ICON[r.kind], `${KINDS[r.kind]} holen`, `${p.values[r.kind]} P · läuft hin & lädt auf`, true, () => this.seq(steps)));
+      }
+    }
+    return box;
+  }
 
-    // log
-    const lg = el('div', { class: 'card log' }, el('h3', {}, 'Verlauf'));
-    const ul = el('div', { class: 'loglines' });
-    this.logLines.slice(-14).reverse().forEach((l) => ul.append(el('div', {}, l)));
-    lg.append(ul);
-    const tools = el('div', { class: 'grp' });
+  paneCards() {
+    const s = this.ctrl.state, me = this.viewSeat(), p = s.players[me];
+    const A = this.acts || [];
+    const has = (t) => A.some((a) => a.t === t);
+    const dsp = (a) => this.ctrl.dispatch(a, actor(s));
+    const box = el('div', { class: 'opts' });
+    box.append(this.turnHint());
+    const cnt = {};
+    p.cards.forEach((t) => (cnt[t] = (cnt[t] || 0) + 1));
+    if (!p.cards.length) box.append(el('p', { class: 'muted' }, 'Keine Ameisenkarten. Hol dir eine über „Einnahme“.'));
+    const go = (mode) => () => { this.mode = mode; this.bridgeFirst = null; this.closeSheet(); this.refresh(); };
+    const defs = [
+      ['bridge', '🌉', 'Brücke', 'zwei Felder verbinden', has('bridge'), go('bridge')],
+      ['blockage', '⛔', 'Blockade', 'ein Feld bis zu deinem nächsten Zug sperren', has('blockage'), go('blockage')],
+      ['wings', '🪽', 'Flügel', 'zu einem beliebigen Feld fliegen', has('wings'), go('wings')],
+      ['superimpose', '🧩', 'Überlagern', 'Dreiecke über bestehende legen', has('super'), () => dsp({ t: 'super' })],
+      ['revenge', '🔥', 'Rache', 'wird automatisch nach einem verlorenen Kampf angeboten', false, null],
+      ['transport', '🎲', 'Transport', 'wähle sie im Reiter „Bewegen“ beim Transport', false, null],
+    ];
+    for (const [id, icon, name, sub, ok, fn] of defs) {
+      if (!cnt[id]) continue;
+      box.append(this.opt(icon, `${name} ×${cnt[id]}`, sub, ok && this.myTurn(), fn || (() => {}), this.mode === id ? 'on' : ''));
+    }
+    if (!cnt.wings && p.cards.length >= 2) box.append(this.opt('🪽', 'Flügel (2 Karten tauschen)', 'zwei beliebige Karten werden zu Flügeln', has('wings') && this.myTurn(), go('wings'), this.mode === 'wings' ? 'on' : ''));
+    return box;
+  }
+
+  paneLog() {
+    const c = this.ctrl, s = c.state;
+    const box = el('div', { class: 'opts' });
     if (c.mode !== 'client') {
       const tg = (label, on, fn, title) => el('button', { class: on ? 'on' : '', title, onclick: () => { fn(); this.renderSide(); } }, label);
-      tools.append(el('label', { class: 'speed', title: 'Tempo der KI-Züge' }, '🐢', el('input', { type: 'range', min: 150, max: 2000, value: 2150 - c.speed, oninput: (e) => (c.speed = 2150 - +e.target.value) }), '🐇'),
+      box.append(el('div', { class: 'grp' },
+        el('label', { class: 'speed', title: 'Tempo der KI-Züge' }, '🐢', el('input', { type: 'range', min: 150, max: 2000, value: 2150 - c.speed, oninput: (e) => (c.speed = 2150 - +e.target.value) }), '🐇'),
         tg('🎥 Kamera', c.cinematic, () => { c.cinematic = !c.cinematic; }, 'Kamerafahrten zu den KI-Aktionen'),
         tg('⏩ Schnell', c.fast, () => { c.fast = !c.fast; }, 'KI-Züge ohne Kamera und Pausen'),
-        tg('⏸ Schritt', c.paused, () => c.setPaused(!c.paused), 'Schrittmodus: KI geht nur per Klick/Leertaste weiter'));
+        tg('⏸ Schritt', c.paused, () => c.setPaused(!c.paused), 'Schrittmodus: KI geht nur per Klick/Leertaste weiter')));
     }
-    tools.append(el('button', { onclick: () => { if (confirm('Spiel verlassen?')) this.closeGame(); } }, 'Zum Menü'));
-    lg.append(tools);
-    side.append(lg);
+    if (c.lastAI) {
+      const L = c.lastAI;
+      const ib = el('div', { class: 'inspector' }, el('b', {}, `KI-Entscheidung (${s.players[L.seat].name}) · V=${L.value.toFixed(2)}`));
+      const order = [...L.probs.keys()].sort((a, b) => L.probs[b] - L.probs[a]).slice(0, 5);
+      for (const i of order) ib.append(el('div', { class: 'bar' + (i === L.idx ? ' chosen' : '') }, el('i', { style: `width:${(L.probs[i] * 100).toFixed(0)}%` }), el('span', {}, `${candidateText(L.acts[i], s)} · ${(L.probs[i] * 100).toFixed(0)}%`)));
+      box.append(ib);
+    }
+    const ul = el('div', { class: 'loglines' });
+    this.logLines.slice(-30).reverse().forEach((l) => ul.append(el('div', {}, l)));
+    box.append(ul, el('button', { onclick: () => { if (confirm('Spiel verlassen?')) this.closeGame(); } }, 'Zum Menü'));
+    return box;
+  }
+
+  renderHud() {
+    const s = this.ctrl.state, me = this.viewSeat();
+    const hud = this.hud;
+    hud.innerHTML = '';
+    for (const p of s.players) {
+      const store = [0, 1, 2].map((k) => { const n = s.resources.filter((r) => r.owner === p.idx && r.kind === k).length; return n ? el('span', { class: 'chip', title: `${KINDS[k]} = ${p.values[k]} P` }, KIND_ICON[k], '×' + n) : null; });
+      hud.append(el('div', { class: 'hp' + (actor(s) === p.idx && !s.over ? ' active' : '') + (p.idx === me ? ' me' : ''), style: `--pc:${p.color}` },
+        el('span', { class: 'dot', style: `background:${p.color}` }), el('b', {}, p.name), el('span', { class: 'score' }, `${score(s, p.idx)}/${WIN_POINTS}`),
+        el('span', { class: 'hm' }, store, el('span', { class: 'chip', title: 'Dreiecke' }, '▲', p.hand.length), el('span', { class: 'chip', title: 'Karten' }, '🃏', p.cards.length),
+          p.carry >= 0 ? el('span', { class: 'chip', title: 'trägt' }, '🐜', KIND_ICON[s.resources[p.carry].kind]) : null)));
+    }
   }
 
   pickHill() {
@@ -662,7 +819,10 @@ export class PlayUI {
   }
 
   // ---- board interaction ----
-  rotate(d) { this.rot = (this.rot + d + 3) % 3; this.refresh(); }
+  rotate(d) {
+    if (this.pp) { this.cyclePickerRot(); return; }
+    this.rot = (this.rot + d + 3) % 3; this.refresh();
+  }
 
   placeMap() {
     const m = new Map();
@@ -686,7 +846,8 @@ export class PlayUI {
     switch (this.mode) {
       case 'place': case 'overlay': {
         this.pmap = this.placeMap();
-        for (const c of this.pmap.keys()) b.cellColors.set(c, hi);
+        const want = this.mode === 'overlay' ? 'overlay' : 'place';
+        for (const a of A) if (a.t === want) b.cellColors.set(a.cell, this.pmap.has(a.cell) ? hi : 'rgba(255,255,255,.14)');
         break;
       }
       case 'move': case 'tmove': case 'wings': {
@@ -713,9 +874,7 @@ export class PlayUI {
       }
       default: break;
     }
-    if (this.pp && this.pmap?.has(this.pp.cid)) {
-      b.ghost = { cell: this.pp.cid, tile: this.selTile, rot: this.pp.rots[this.pp.i], piece: this.mode === 'place' ? this.piece : 0, seat: this.viewSeat() };
-    }
+    if (this.pp) b.ghost = { cell: this.pp.cid, tile: this.pp.tile, rot: this.pp.rot, piece: this.mode === 'place' ? this.pp.piece : 0, seat: this.viewSeat() };
   }
 
   onBoardHover(cid) {
@@ -730,9 +889,9 @@ export class PlayUI {
   }
 
   isMobile() { return window.matchMedia('(max-width: 860px)').matches; }
-  closeSheet() { if (this.isMobile() && this.sheetOpen) { this.sheetOpen = false; } }
+  closeSheet() { if (this.isMobile()) this.tab = null; }
 
-  hideCtx() { if (this.ctxMenu) this.ctxMenu.hidden = true; }
+  hideCtx() { if (this.ctxMenu) { this.ctxMenu.hidden = true; this.ctxMenu.classList.remove('picker'); } }
 
   openMenu(items, ev, title = '') {
     const m = this.ctxMenu;
@@ -742,6 +901,11 @@ export class PlayUI {
       m.append(el('button', { class: it.cls || '', disabled: it.disabled, onclick: (e) => { e.stopPropagation(); this.hideCtx(); it.fn(); } }, it.label));
     }
     if (!items.length) { m.hidden = true; return; }
+    this.placeCtx(ev);
+  }
+
+  placeCtx(ev) {
+    const m = this.ctxMenu;
     m.hidden = false;
     const r = this.boardWrap.getBoundingClientRect();
     const mw = m.offsetWidth, mh = m.offsetHeight;
@@ -751,28 +915,74 @@ export class PlayUI {
     this._menuEv = ev;
   }
 
-  // confirm popover with ghost preview (touch-friendly placement)
-  previewPlace(cid, ev) {
-    const rots = this.pmap.get(cid);
-    this.pp = { cid, rots, i: Math.max(0, rots.indexOf(this.rot)) };
+  previewPlace(cid, ev) { this.openPicker(cid, ev); }
+
+  // placement picker: choose tile, accessory and rotation for the tapped cell, ghost shows the result
+  pickerOptions(cid) {
+    const want = this.mode === 'overlay' ? 'overlay' : 'place';
+    const list = (this.acts || []).filter((a) => a.t === want && a.cell === cid);
+    return { want, list };
+  }
+  openPicker(cid, ev) {
+    const { list } = this.pickerOptions(cid);
+    if (!list.length) return;
+    const tiles = [...new Set(list.map((a) => a.tile))];
+    const tile = tiles.includes(this.selTile) ? this.selTile : tiles[0];
+    const pieces = [...new Set(list.filter((a) => a.tile === tile).map((a) => a.piece ?? 0))];
+    const piece = pieces.includes(this.piece) ? this.piece : pieces[0];
+    const rots = [...new Set(list.filter((a) => a.tile === tile && (a.piece ?? 0) === piece).map((a) => a.rot))];
+    this.pp = { cid, tile, piece, rot: rots.includes(this.rot) ? this.rot : rots[0], ev };
+    this.drawPicker();
+  }
+  cyclePickerRot() {
+    const { list } = this.pickerOptions(this.pp.cid);
+    const rots = [...new Set(list.filter((a) => a.tile === this.pp.tile && (a.piece ?? 0) === this.pp.piece).map((a) => a.rot))];
+    this.pp.rot = rots[(rots.indexOf(this.pp.rot) + 1) % rots.length];
+    this.rot = this.pp.rot;
+    this.drawPicker();
+  }
+  drawPicker() {
+    const pp = this.pp, m = this.ctxMenu;
+    const { want, list } = this.pickerOptions(pp.cid);
+    const over = want === 'overlay';
+    const tiles = [...new Set(list.map((a) => a.tile))].sort();
+    const pieces = [...new Set(list.filter((a) => a.tile === pp.tile).map((a) => a.piece ?? 0))].sort();
+    const rots = [...new Set(list.filter((a) => a.tile === pp.tile && (a.piece ?? 0) === pp.piece).map((a) => a.rot))];
+    this.selTile = pp.tile; this.piece = pp.piece;
+    m.innerHTML = '';
+    m.classList.add('picker');
+    m.append(el('div', { class: 'ctx-title' }, over ? 'Überlagern – Dreieck wählen' : 'Dreieck wählen'));
+    const row = el('div', { class: 'tiles' });
+    for (const t of tiles) {
+      const cv = el('canvas', { class: 'tilecv' });
+      row.append(el('button', { class: 'tile' + (t === pp.tile ? ' sel' : ''), title: TILE_TYPES[t].name, onclick: (e) => {
+        e.stopPropagation();
+        const ps = [...new Set(list.filter((a) => a.tile === t).map((a) => a.piece ?? 0))];
+        pp.tile = t; if (!ps.includes(pp.piece)) pp.piece = ps[0];
+        const rs = list.filter((a) => a.tile === t && (a.piece ?? 0) === pp.piece).map((a) => a.rot);
+        if (!rs.includes(pp.rot)) pp.rot = rs[0];
+        this.drawPicker();
+      } }, cv));
+      drawTilePreview(cv, t, t === pp.tile ? pp.rot : (rots[0] ?? 0), { color: t === pp.tile ? '#9fc58a' : '#8db37a', size: 46 });
+    }
+    m.append(row);
+    if (!over && pieces.length > 1) {
+      const pn = ['Nur Dreieck', '⛰ Hügel', '❔ Ressource'];
+      const pr = el('div', { class: 'seg' });
+      for (const v of pieces) pr.append(el('button', { class: v === pp.piece ? 'on' : '', onclick: (e) => { e.stopPropagation(); pp.piece = v; const rs = list.filter((a) => a.tile === pp.tile && (a.piece ?? 0) === v).map((a) => a.rot); if (!rs.includes(pp.rot)) pp.rot = rs[0]; this.drawPicker(); } }, pn[v]));
+      m.append(pr);
+    }
+    const ok = el('button', { class: 'primary', onclick: (e) => {
+      e.stopPropagation();
+      const a = over ? { t: 'overlay', cell: pp.cid, tile: pp.tile, rot: pp.rot } : { t: 'place', cell: pp.cid, tile: pp.tile, rot: pp.rot, piece: pp.piece };
+      this.pp = null; m.classList.remove('picker'); this.hideCtx();
+      this.ctrl.dispatch(a, actor(this.ctrl.state));
+    } }, over ? '✔ Überlagern' : '✔ Hier legen');
+    m.append(el('div', { class: 'seg' }, rots.length > 1 ? el('button', { onclick: (e) => { e.stopPropagation(); this.cyclePickerRot(); } }, '⟳ Drehen') : null, ok,
+      el('button', { onclick: (e) => { e.stopPropagation(); this.pp = null; m.classList.remove('picker'); this.refresh(); } }, '✖')));
     this.updateBoardMode(); this.board.draw();
-    const show = () => {
-      this.updateBoardMode(); this.board.draw();
-      const over = this.mode === 'overlay';
-      const pieces = over ? [] : [...new Set(this.acts.filter((a) => a.t === 'place' && a.cell === cid && a.tile === this.selTile).map((a) => a.piece))].sort();
-      const pn = ['Nur Dreieck', '⛰ mit Hügel', '❔ mit Ressource'];
-      this.openMenu([
-        ...(pieces.length > 1 ? [{ label: `Beilage: ${pn[this.piece]} ›`, fn: () => { this.piece = pieces[(pieces.indexOf(this.piece) + 1) % pieces.length]; this.pmap = this.placeMap(); show(); } }] : []),
-        { label: `✔ ${over ? 'Überlagern' : 'Hier legen'}`, cls: 'primary', fn: () => {
-          const rot = this.pp.rots[this.pp.i]; this.pp = null;
-          const a = over ? { t: 'overlay', cell: cid, tile: this.selTile, rot } : { t: 'place', cell: cid, tile: this.selTile, rot, piece: this.piece };
-          this.ctrl.dispatch(a, actor(this.ctrl.state));
-        } },
-        ...(rots.length > 1 ? [{ label: '⟳ Drehen', fn: () => { this.pp.i = (this.pp.i + 1) % rots.length; this.rot = this.pp.rots[this.pp.i]; show(); } }] : []),
-        { label: '✖ Abbrechen', fn: () => { this.pp = null; this.refresh(); } },
-      ], ev);
-    };
-    show();
+    this.placeCtx(pp.ev);
+    ok.focus({ preventScroll: true });
   }
 
   cellMenu(cid, ev) {
@@ -826,16 +1036,10 @@ export class PlayUI {
     if (!this.myTurn() || cid < 0) return;
     const s = this.ctrl.state;
     const dsp = (a) => { this.board.ghost = null; this.ctrl.dispatch(a, actor(s)); };
-    const touch = ev?.pointerType === 'touch';
     switch (this.mode) {
       case 'place': case 'overlay': {
-        const rots = this.pmap?.get(cid);
-        if (!rots) break;
-        if (touch) return this.previewPlace(cid, ev);
-        const rot = rots.includes(this.rot) ? this.rot : rots[0];
-        if (this.mode === 'overlay') dsp({ t: 'overlay', cell: cid, tile: this.selTile, rot });
-        else dsp({ t: 'place', cell: cid, tile: this.selTile, rot, piece: this.piece });
-        return;
+        if (this.pickerOptions(cid).list.length) return this.openPicker(cid, ev);
+        break;
       }
       case 'move': case 'tmove': case 'wings': {
         const a = this.dmap?.get(cid);

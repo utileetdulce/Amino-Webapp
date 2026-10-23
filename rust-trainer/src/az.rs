@@ -12,7 +12,7 @@ pub struct Sample { pub s: [f32; SF], pub a: Vec<f32>, pub n: usize, pub tgt: Ve
 pub struct GameOut { pub samples: Vec<Sample>, pub winner: i32, pub turns: i32, pub learner: i32 }
 
 #[derive(Clone, Copy)]
-pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32 }
+pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32, pub qbeta: f64, pub ttemp: f64 }
 
 pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng) -> GameOut {
     let num_players = 2;
@@ -34,7 +34,17 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
         let mut sf = [0f32; SF];
         state_features(&s, &ctx, &mut sf);
         let a = candidate_matrix(&s, &ctx, &r.acts);
-        let tgt: Vec<f32> = r.visits.iter().map(|&v| (v as f64 / tot) as f32).collect();
+        let tgt: Vec<f32> = if cfg.qbeta > 0.0 {
+            // policy improvement: pi' ∝ prior · exp(beta · (Q(a) - V)); robust with few simulations (visit counts are mostly exploration)
+            let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + cfg.qbeta * (q as f64 - r.value)).collect();
+            let mx = l.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mut z = 0.0; for x in l.iter_mut() { *x = (*x - mx).exp(); z += *x; }
+            l.iter().map(|x| (x / z) as f32).collect()
+        } else if cfg.ttemp != 1.0 {
+            let w: Vec<f64> = r.visits.iter().map(|&v| (v as f64).powf(1.0 / cfg.ttemp)).collect();
+            let z: f64 = w.iter().sum::<f64>().max(1e-12);
+            w.iter().map(|x| (x / z) as f32).collect()
+        } else { r.visits.iter().map(|&v| (v as f64 / tot) as f32).collect() };
         samples.push((pi, Sample { s: sf, a, n: r.acts.len(), tgt, z: 0.0 }));
         let tau = if searched < cfg.tau_moves { 1.0 } else { 0.1 };
         searched += 1;
@@ -50,7 +60,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
 }
 
 /// Minibatch SGD on the replay buffer; each minibatch gradient is computed in parallel on the rayon pool.
-pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, lr: f64, rng: &mut Rng) -> (f64, f64) {
+pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, lr: f64, pcoef: f32, vcoef: f32, rng: &mut Rng) -> (f64, f64) {
     let size = net.size();
     let nthreads = rayon::current_num_threads().max(1);
     let chunk = batch.div_ceil(nthreads).max(1);
@@ -67,13 +77,13 @@ pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, l
                 let p = softmax(&fp.logits, 1.0);
                 let mut dlog = vec![0f32; d.n];
                 for c in 0..d.n {
-                    dlog[c] = (p[c] - d.tgt[c]) / batch as f32;
+                    dlog[c] = pcoef * (p[c] - d.tgt[c]) / batch as f32;
                     if d.tgt[c] > 1e-8 { pl -= d.tgt[c] as f64 * (p[c].max(1e-8) as f64).ln(); }
                 }
                 let (v, vact) = netr.forward_value(&d.s, true);
                 let err = v - d.z;
                 vl += (err * err) as f64;
-                netr.backward(&mut g, &d.s, &d.a, d.n, &fp, &dlog, &vact, 2.0 * err / batch as f32);
+                netr.backward(&mut g, &d.s, &d.a, d.n, &fp, &dlog, &vact, vcoef * 2.0 * err / batch as f32);
             }
             (g, pl, vl)
         }).reduce_with(|mut a, b| { for (x, y) in a.0.iter_mut().zip(b.0.iter()) { *x += *y; } (a.0, a.1 + b.1, a.2 + b.2) }).unwrap();

@@ -58,8 +58,10 @@ class Node {
 }
 
 export class MCTS {
-  constructor(net, { sims = 64, cpuct = 1.5, maxDepth = 18, maxCands = 40, timeMs = 0, dirichlet = 0, dirAlpha = 0.3, fpu = 0 } = {}) {
-    Object.assign(this, { net, sims, cpuct, maxDepth, maxCands, timeMs, dirichlet, dirAlpha, fpu });
+  constructor(net, { sims = 64, cpuct = 1.25, maxDepth = 18, maxCands = 40, topK = 12, timeMs = 0, dirichlet = 0, dirAlpha = 0.3, fpu = 0 } = {}) {
+    // topK: only the k best candidates (by network prior, plus 'end') are ever explored at a node. With few simulations a wide
+    // tree gives flat visit counts, which is both weaker play and a poor training target.
+    Object.assign(this, { net, sims, cpuct, maxDepth, maxCands, topK, timeMs, dirichlet, dirAlpha, fpu });
   }
 
   candidates(s) { return capDeterministic(legalActions(s, false), this.maxCands); }
@@ -105,8 +107,9 @@ export class MCTS {
     }
     const acts = root.acts || [];
     const visits = acts.map((a) => (root.children.get(actionKey(a))?.N || 0));
-    const q = acts.map((a) => { const c = root.children.get(actionKey(a)); return c && c.N ? c.W / c.N : 0; });
-    return { acts, visits, q, value: root.N ? root.W / root.N : 0, observer };
+    const value = root.N ? root.W / root.N : 0;
+    const q = acts.map((a) => { const c = root.children.get(actionKey(a)); return c && c.N ? c.W / c.N : value; });
+    return { acts, visits, q, value, prior: root.prior || [], observer };
   }
 
   simulate(root, s, observer, addNoise) {
@@ -124,12 +127,20 @@ export class MCTS {
       if (!node.children) { // expand + evaluate leaf
         const { v, priors } = this.evaluate(s, acts, true);
         node.children = new Map(); node.acts = acts;
-        let pr = Array.from(priors);
+        const order = acts.map((_, i) => i).sort((a, b) => priors[b] - priors[a] || a - b);
+        const keep = new Set(order.slice(0, Math.max(2, this.topK)));
+        const endIdx = acts.findIndex((a) => a.t === 'end');
+        if (endIdx >= 0) keep.add(endIdx);
+        const idx = [...keep].sort((a, b) => a - b);
+        let pk = idx.map((i) => priors[i]);
+        const tot = pk.reduce((a, b) => a + b, 0) || 1e-12;
+        pk = pk.map((x) => x / tot);
         if (addNoise && node === root) {
-          const g = acts.map(() => gammaSample(this.dirAlpha)); const gs = g.reduce((a, b) => a + b, 0) || 1;
-          pr = pr.map((p, i) => (1 - this.dirichlet) * p + this.dirichlet * g[i] / gs);
+          const g = idx.map(() => gammaSample(this.dirAlpha)); const gs = g.reduce((a, b) => a + b, 0) || 1;
+          pk = pk.map((p, i) => (1 - this.dirichlet) * p + this.dirichlet * g[i] / gs);
         }
-        acts.forEach((a, i) => node.children.set(actionKey(a), { N: 0, W: 0, P: pr[i], node: null }));
+        idx.forEach((i, j) => node.children.set(actionKey(acts[i]), { N: 0, W: 0, P: pk[j], node: null }));
+        if (node === root) root.prior = Array.from(priors);
         value = actor(s) === observer ? v : -v;
         break;
       }
@@ -138,9 +149,12 @@ export class MCTS {
       const sqrtN = Math.sqrt(node.N + 1);
       const parentQ = node.N ? node.W / node.N : 0;
       let best = null, bestScore = -Infinity, bestAct = null;
+      if (!acts.some((a) => node.children.has(actionKey(a)))) { // no explored candidate is legal in this world: open the node up
+        for (const a of acts) node.children.set(actionKey(a), { N: 0, W: 0, P: 1 / acts.length, node: null });
+      }
       for (const a of acts) {
-        let c = node.children.get(actionKey(a));
-        if (!c) { c = { N: 0, W: 0, P: 1e-3, node: null }; node.children.set(actionKey(a), c); }
+        const c = node.children.get(actionKey(a));
+        if (!c) continue;
         const q = c.N ? c.W / c.N : parentQ - sign * this.fpu;
         const score = sign * q + this.cpuct * c.P * sqrtN / (1 + c.N);
         if (score > bestScore) { bestScore = score; best = c; bestAct = a; }

@@ -142,8 +142,8 @@ export class NNAgent {
 
 // search agent: network priors/values + PUCT tree search over determinized worlds
 export class MCTSAgent {
-  constructor(net, { sims = 64, timeMs = 0, tau = 0, maxDepth = 18, name = 'KI (Suche)' } = {}) {
-    this.mcts = new MCTS(net, { sims: Math.max(8, sims), timeMs, maxDepth });
+  constructor(net, { sims = 64, timeMs = 0, tau = 0, maxDepth = 18, topK = 12, cpuct = 1.25, name = 'KI (Suche)' } = {}) {
+    this.mcts = new MCTS(net, { sims: Math.max(8, sims), timeMs, maxDepth, topK, cpuct });
     this.tau = tau; this.name = name;
   }
   act(s, info = null) {

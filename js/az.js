@@ -6,9 +6,9 @@ import { buildCtx, stateFeatures, candidateMatrix } from './features.js';
 import { softmax } from './nn.js';
 
 // Plays one game; returns training samples [{s, A, n, tgt, z}] and the result.
-export function selfPlayGame(net, { sims = 64, tauMoves = 30, numPlayers = 2, oppHeuristic = false, dirichlet = 0.25, depth = 18, maxDecisions = 3000 } = {}) {
+export function selfPlayGame(net, { sims = 64, tauMoves = 30, numPlayers = 2, oppHeuristic = false, dirichlet = 0.25, depth = 18, maxDecisions = 3000, qbeta = 3, topK = 12, cpuct = 1.25 } = {}) {
   const s = newGame({ numPlayers });
-  const mcts = new MCTS(net, { sims, dirichlet, maxDepth: depth });
+  const mcts = new MCTS(net, { sims, dirichlet, maxDepth: depth, topK, cpuct });
   const heur = new HeuristicAgent();
   const learner = oppHeuristic ? Math.floor(Math.random() * numPlayers) : -1;
   const samples = [];
@@ -20,8 +20,14 @@ export function selfPlayGame(net, { sims = 64, tauMoves = 30, numPlayers = 2, op
     if (oppHeuristic && pi !== learner) { applyAction(s, heur.act(s)); continue; }
     const r = mcts.search(s, { sims, noise: dirichlet });
     const tot = r.visits.reduce((a, b) => a + b, 0) || 1;
+    let tgt;
+    if (qbeta > 0) { // policy improvement target: prior * exp(beta * (Q - V)); robust with few simulations
+      const l = r.prior.map((p, i) => Math.log(Math.max(p, 1e-8)) + qbeta * (r.q[i] - r.value));
+      const mx = Math.max(...l); const e = l.map((x) => Math.exp(x - mx)); const z = e.reduce((a, b) => a + b, 0);
+      tgt = Float32Array.from(e, (x) => x / z);
+    } else tgt = Float32Array.from(r.visits, (v) => v / tot);
     const ctx = buildCtx(s, pi);
-    samples.push({ pi, s: stateFeatures(ctx), A: candidateMatrix(ctx, r.acts), n: r.acts.length, tgt: Float32Array.from(r.visits, (v) => v / tot) });
+    samples.push({ pi, s: stateFeatures(ctx), A: candidateMatrix(ctx, r.acts), n: r.acts.length, tgt });
     const idx = pickByVisits(r.visits, searched++ < tauMoves ? 1 : 0.1);
     applyAction(s, r.acts[idx]);
   }

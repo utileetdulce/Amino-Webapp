@@ -103,7 +103,12 @@ fn main() {
     let workers = argf("workers", ncpu as f64) as usize;
     let sims = argf("sims", 64.0) as usize;
     let games = argf("games", 24.0) as usize;
-    let steps = argf("steps", 150.0) as usize;
+    let steps = argf("steps", 150.0) as usize; // upper bound of minibatches per iteration
+    let pcoef = argf("pcoef", 1.0) as f32; let vcoef = argf("vcoef", 1.0) as f32; // loss weights (0 freezes that head)
+    let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
+    let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
+    mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
+    mcts::CPUCT_MILLI.store((argf("cpuct", 1.25) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);
     let batch = argf("batch", 128.0) as usize;
     let lr = argf("lr", 3e-4);
     let buffer_cap = argf("buffer", 40000.0) as usize;
@@ -138,7 +143,7 @@ fn main() {
     let t0 = Instant::now();
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
-    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth };
+    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0) };
     for _ in 0..iters {
         if minutes > 0.0 && t0.elapsed().as_secs_f64() / 60.0 > minutes { break; }
         let t1 = Instant::now();
@@ -152,20 +157,23 @@ fn main() {
             }).collect()
         };
         let (mut turns, mut n_games) = (0i64, 0u64);
+        let mut new_samples = 0usize;
         let (mut vw, mut vd, mut vl) = (0, 0, 0);
         for (o, heur) in outs {
             turns += o.turns as i64; n_games += 1;
             if heur { if o.winner < 0 { vd += 1 } else if o.winner == o.learner { vw += 1 } else { vl += 1 } }
+            new_samples += o.samples.len();
             buffer.extend(o.samples);
         }
         if buffer.len() > buffer_cap { let ex = buffer.len() - buffer_cap; buffer.drain(0..ex); }
         let t_play = t1.elapsed().as_secs_f64();
         let t2 = Instant::now();
-        let (ploss, vloss) = az_update(&mut net, &buffer, steps, batch, lr, &mut rng);
+        let steps_eff = if buffer.len() < min_buffer { 0 } else { (((new_samples as f64 * ratio) / batch as f64).ceil() as usize).clamp(1, steps) };
+        let (ploss, vloss) = if steps_eff > 0 { az_update(&mut net, &buffer, steps_eff, batch, lr, pcoef, vcoef, &mut rng) } else { (0.0, 0.0) };
         let t_train = t2.elapsed().as_secs_f64();
         games_total += n_games; iter0 += 1;
-        println!("iter {} games {} buf {} turns/game {:.0} play {:.0}s train {:.1}s  ploss {:.3} vloss {:.3}  vsHeur(self-play seats) {}-{}-{}",
-            iter0, games_total, buffer.len(), turns as f64 / n_games as f64, t_play, t_train, ploss, vloss, vw, vd, vl);
+        println!("iter {} games {} buf {} steps {} turns/game {:.0} play {:.0}s train {:.1}s  ploss {:.3} vloss {:.3}  vsHeur(self-play seats) {}-{}-{}",
+            iter0, games_total, buffer.len(), steps_eff, turns as f64 / n_games as f64, t_play, t_train, ploss, vloss, vw, vd, vl);
         save(&out, &net, sims, games_total, iter0, &history);
         if eval_every > 0 && iter0 % eval_every == 0 {
             let raw = eval(&net, eval_games, false, sims, depth, rng.u64());

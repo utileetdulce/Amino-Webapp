@@ -21,7 +21,7 @@ parentPort.on('message', (m) => {
     let w = 0, d = 0, l = 0;
     for (let g = 0; g < m.games; g++) {
       const seat = (m.offset + g) % 2;
-      const me = m.search ? new MCTSAgent(net, { sims: m.sims, maxDepth: m.cfg.depth }) : new NNAgent(net, { sample: true, temperature: 0.5 });
+      const me = m.search ? new MCTSAgent(net, { sims: m.sims, maxDepth: m.cfg.depth, topK: m.cfg.topK, cpuct: m.cfg.cpuct }) : new NNAgent(net, { sample: true, temperature: 0.5 });
       const s = playGame([0, 1].map((i) => (i === seat ? me : new HeuristicAgent())), {});
       if (s.winner < 0) d++; else if (s.winner === seat) w++; else l++;
     }

@@ -4,13 +4,18 @@ use crate::features::*;
 use crate::nn::{softmax, Net};
 use crate::rng::Rng;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 const NONE: u32 = u32::MAX;
+/// Search parameters set once from the CLI (`--topk`, `--cpuct`). top_k limits how many candidates (by prior) are ever explored
+/// at a node: with few simulations per decision a wide tree yields flat visit counts, which would flatten the policy when used as a target.
+pub static TOPK: AtomicUsize = AtomicUsize::new(12);
+pub static CPUCT_MILLI: AtomicUsize = AtomicUsize::new(1250);
 
 struct Child { act: Act, n: u32, w: f64, p: f32, node: u32 }
 struct Node { n: u32, w: f64, expanded: bool, children: Vec<Child> }
 impl Node { fn new() -> Node { Node { n: 0, w: 0.0, expanded: false, children: Vec::new() } } }
 
-pub struct SearchResult { pub acts: Vec<Act>, pub visits: Vec<u32>, pub value: f64 }
+pub struct SearchResult { pub acts: Vec<Act>, pub visits: Vec<u32>, pub value: f64, pub prior: Vec<f32>, pub q: Vec<f32> }
 
 pub struct Mcts<'a> {
     pub net: &'a Net, pub sims: usize, pub cpuct: f64, pub max_depth: i32, pub max_cands: usize,
@@ -68,7 +73,7 @@ fn gamma_sample(k: f64, rng: &mut Rng) -> f64 {
 
 impl<'a> Mcts<'a> {
     pub fn new(net: &'a Net, sims: usize, max_depth: i32, dirichlet: f64) -> Mcts<'a> {
-        Mcts { net, sims, cpuct: 1.5, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0 }
+        Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0 }
     }
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
@@ -99,17 +104,21 @@ impl<'a> Mcts<'a> {
         let mut nodes: Vec<Node> = Vec::with_capacity(sims * 4 + 4);
         nodes.push(Node::new());
         let mut root_acts: Vec<Act> = Vec::new();
+        let mut root_prior: Vec<f32> = Vec::new();
         for i in 0..sims {
             let mut s = *s0;
             determinize(&mut s, observer, rng);
-            self.simulate(&mut nodes, &mut root_acts, &mut s, observer, noise && i == 0, rng);
+            self.simulate(&mut nodes, &mut root_acts, &mut root_prior, &mut s, observer, noise && i == 0, rng);
         }
         let root = &nodes[0];
         let visits = root_acts.iter().map(|a| root.children.iter().find(|c| c.act == *a).map_or(0, |c| c.n)).collect();
-        SearchResult { acts: root_acts, visits, value: if root.n > 0 { root.w / root.n as f64 } else { 0.0 } }
+        let v = if root.n > 0 { root.w / root.n as f64 } else { 0.0 };
+        // observer-view mean value of each root action (the root value where an action was never visited)
+        let q = root_acts.iter().map(|a| root.children.iter().find(|c| c.act == *a).map_or(v as f32, |c| if c.n > 0 { (c.w / c.n as f64) as f32 } else { v as f32 })).collect();
+        SearchResult { acts: root_acts, visits, value: v, prior: root_prior, q }
     }
 
-    fn simulate(&self, nodes: &mut Vec<Node>, root_acts: &mut Vec<Act>, s: &mut State, observer: usize, add_noise: bool, rng: &mut Rng) {
+    fn simulate(&self, nodes: &mut Vec<Node>, root_acts: &mut Vec<Act>, root_prior: &mut Vec<f32>, s: &mut State, observer: usize, add_noise: bool, rng: &mut Rng) {
         let mut path: Vec<(usize, usize)> = Vec::with_capacity(self.max_depth as usize + 2);
         let mut node = 0usize; let mut depth = 0; let value: f64;
         let mut acts = self.advance_forced(s);
@@ -122,16 +131,26 @@ impl<'a> Mcts<'a> {
             }
             acts = cap_deterministic(acts, self.max_cands);
             if !nodes[node].expanded {
-                let (v, mut pr) = self.evaluate(s, &acts, true);
+                let (v, pr) = self.evaluate(s, &acts, true);
+                // keep the top-k candidates by prior (plus "end turn" so a turn can always be finished)
+                let k = TOPK.load(Ordering::Relaxed).max(2);
+                let mut order: Vec<usize> = (0..acts.len()).collect();
+                order.sort_by(|&a, &b| pr[b].partial_cmp(&pr[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
+                let mut keep: Vec<usize> = order.iter().copied().take(k).collect();
+                if let Some(ei) = acts.iter().position(|a| a.t == A_END) { if !keep.contains(&ei) { keep.push(ei); } }
+                keep.sort();
+                let mut pk: Vec<f64> = keep.iter().map(|&i| pr[i] as f64).collect();
+                let tot: f64 = pk.iter().sum::<f64>().max(1e-12);
+                for x in pk.iter_mut() { *x /= tot; }
                 if add_noise && node == 0 {
-                    let g: Vec<f64> = acts.iter().map(|_| gamma_sample(self.dir_alpha, rng)).collect();
+                    let g: Vec<f64> = keep.iter().map(|_| gamma_sample(self.dir_alpha, rng)).collect();
                     let gs: f64 = { let t: f64 = g.iter().sum(); if t == 0.0 { 1.0 } else { t } };
-                    for (i, p) in pr.iter_mut().enumerate() { *p = ((1.0 - self.dirichlet) * *p as f64 + self.dirichlet * g[i] / gs) as f32; }
+                    for (i, p) in pk.iter_mut().enumerate() { *p = (1.0 - self.dirichlet) * *p + self.dirichlet * g[i] / gs; }
                 }
                 let nd = &mut nodes[node];
                 nd.expanded = true;
-                for (i, a) in acts.iter().enumerate() { nd.children.push(Child { act: *a, n: 0, w: 0.0, p: pr[i], node: NONE }); }
-                if node == 0 { *root_acts = acts.clone(); }
+                for (j, &i) in keep.iter().enumerate() { nd.children.push(Child { act: acts[i], n: 0, w: 0.0, p: pk[j] as f32, node: NONE }); }
+                if node == 0 { *root_acts = acts.clone(); *root_prior = pr.clone(); }
                 value = if s.actor() == observer { v as f64 } else { -(v as f64) };
                 break;
             }
@@ -140,11 +159,13 @@ impl<'a> Mcts<'a> {
             let sqrt_n = ((pn + 1) as f64).sqrt();
             let parent_q = if pn > 0 { pw / pn as f64 } else { 0.0 };
             let mut best = usize::MAX; let mut best_score = f64::NEG_INFINITY; let mut best_act = acts[0];
+            if !acts.iter().any(|a| nodes[node].children.iter().any(|c| c.act == *a)) {
+                // none of the explored candidates is legal in this determinized world: open the node up
+                let p = 1.0 / acts.len() as f32;
+                for a in acts.iter() { nodes[node].children.push(Child { act: *a, n: 0, w: 0.0, p, node: NONE }); }
+            }
             for a in acts.iter() {
-                let ci = match nodes[node].children.iter().position(|c| c.act == *a) {
-                    Some(i) => i,
-                    None => { nodes[node].children.push(Child { act: *a, n: 0, w: 0.0, p: 1e-3, node: NONE }); nodes[node].children.len() - 1 }
-                };
+                let ci = match nodes[node].children.iter().position(|c| c.act == *a) { Some(i) => i, None => continue };
                 let c = &nodes[node].children[ci];
                 let q = if c.n > 0 { c.w / c.n as f64 } else { parent_q - sign * self.fpu };
                 let score = sign * q + self.cpuct * c.p as f64 * sqrt_n / (1.0 + c.n as f64);

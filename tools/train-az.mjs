@@ -14,7 +14,7 @@ const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i < 0 ?
 const cfg = {
   workers: +arg('workers', Math.max(1, os.cpus().length - 1)), sims: +arg('sims', 64), games: +arg('games', 24), steps: +arg('steps', 150), batch: +arg('batch', 128),
   lr: +arg('lr', 3e-4), buffer: +arg('buffer', 40000), evalEvery: +arg('eval-every', 5), evalGames: +arg('eval-games', 16), oppMix: +arg('opp-mix', 0.2),
-  depth: +arg('depth', 18), minutes: +arg('minutes', 0), iters: +arg('iters', 100000), tauMoves: +arg('tau-moves', 30),
+  depth: +arg('depth', 18), topK: +arg('topk', 12), cpuct: +arg('cpuct', 1.25), qbeta: +arg('qbeta', 3), ratio: +arg('ratio', 4), minBuffer: +arg('min-buffer', 5000), minutes: +arg('minutes', 0), iters: +arg('iters', 100000), tauMoves: +arg('tau-moves', 30),
 };
 const out = arg('out', 'models/az.json');
 const init = arg('init', fs.existsSync('models/pretrained.json') ? 'models/pretrained.json' : null);
@@ -49,12 +49,14 @@ for (let it = 0; it < cfg.iters; it++) {
   if (cfg.minutes && (Date.now() - t0) / 60000 > cfg.minutes) break;
   const t1 = Date.now();
   const gs = split(cfg.games, pool.length);
-  const rs = await Promise.all(pool.map((w, i) => (gs[i] ? call(w, { type: 'play', theta: net.theta, arch: net.arch, games: gs[i], oppMix: cfg.oppMix, cfg: { sims: cfg.sims, depth: cfg.depth, tauMoves: cfg.tauMoves } }) : { samples: [], games: 0, turns: 0, vsHeur: { w: 0, d: 0, l: 0 } })));
+  const rs = await Promise.all(pool.map((w, i) => (gs[i] ? call(w, { type: 'play', theta: net.theta, arch: net.arch, games: gs[i], oppMix: cfg.oppMix, cfg: { sims: cfg.sims, depth: cfg.depth, tauMoves: cfg.tauMoves, qbeta: cfg.qbeta, topK: cfg.topK, cpuct: cfg.cpuct } }) : { samples: [], games: 0, turns: 0, vsHeur: { w: 0, d: 0, l: 0 } })));
   let nGames = 0, turns = 0; const vh = { w: 0, d: 0, l: 0 };
   for (const r of rs) { buffer.push(...r.samples); nGames += r.games; turns += r.turns; vh.w += r.vsHeur.w; vh.d += r.vsHeur.d; vh.l += r.vsHeur.l; }
   if (buffer.length > cfg.buffer) buffer = buffer.slice(buffer.length - cfg.buffer);
   const tPlay = (Date.now() - t1) / 1000;
-  const up = azUpdate(net, buffer, { steps: cfg.steps, batch: cfg.batch, lr: cfg.lr });
+  const newSamples = rs.reduce((a, r) => a + r.samples.length, 0);
+  const stepsEff = buffer.length < cfg.minBuffer ? 0 : Math.min(cfg.steps, Math.max(1, Math.ceil((newSamples * cfg.ratio) / cfg.batch)));
+  const up = stepsEff ? azUpdate(net, buffer, { steps: stepsEff, batch: cfg.batch, lr: cfg.lr }) : { policyLoss: 0, valueLoss: 0 };
   meta.games += nGames; meta.iter++;
   console.log(`iter ${meta.iter} games ${meta.games} buf ${buffer.length} turns/game ${(turns / nGames).toFixed(0)} play ${tPlay.toFixed(0)}s  ploss ${up.policyLoss.toFixed(3)} vloss ${up.valueLoss.toFixed(3)}  vsHeur(self-play seats) ${vh.w}-${vh.d}-${vh.l}`);
   save(out);

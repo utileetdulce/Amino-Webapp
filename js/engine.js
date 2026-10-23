@@ -114,6 +114,7 @@ export function fastClone(s) {
   c.resources = s.resources.map((r) => ({ ...r }));
   c.hills = s.hills.slice(); c.blocks = s.blocks.slice(); c.bridges = s.bridges.slice();
   c.used = { ...s.used };
+  c.moveTrail = (s.moveTrail || []).slice();
   c.pending = s.pending ? { ...s.pending, overlays: s.pending.overlays ? s.pending.overlays.slice() : undefined } : null;
   c.log = [];
   return c;
@@ -128,6 +129,7 @@ function startTurn(s) {
   s.blocks = s.blocks.filter((b) => b.owner !== s.cur);
   s.used = { income: 0, swap: 0, fight: 0, transport: 0 };
   s.actionsThisTurn = 0;
+  s.moveTrail = []; s.lastT = null; // anti-loop bookkeeping for AI candidate generation
 }
 
 function endTurn(s) {
@@ -419,7 +421,9 @@ export function legalActions(s, full = false) {
     const dist = bfs(s, pi, antStarts(s, pi));
     const interesting = interestingNodes(s, pi);
     const dests = [];
-    for (const [n, d] of dist) if (d > 0) dests.push([n, d]);
+    // AI only: never step back onto a node already visited this turn without another action in between
+    const trail = !full && s.moveTrail && s.moveTrail.length ? new Set(s.moveTrail) : null;
+    for (const [n, d] of dist) if (d > 0 && !(trail && trail.has(n))) dests.push([n, d]);
     if (p.carry >= 0) {
       // house rule: with a resource the ant moves ONLY via the transport action (dice), never by a plain move
     } else if (full) {
@@ -431,8 +435,8 @@ export function legalActions(s, full = false) {
       for (let i = 0; i < dests.length; i += stride) chosen.add(dests[i][0]);
       for (const n of chosen) acts.push({ t: 'move', to: n });
     }
-    if (p.carry < 0 && cs && cs.res >= 0) acts.push({ t: 'load' });
-    if (p.carry >= 0 && cs.res < 0) acts.push({ t: 'unload' });
+    if (p.carry < 0 && cs && cs.res >= 0 && (full || s.lastT !== 'unload')) acts.push({ t: 'load' });
+    if (p.carry >= 0 && cs.res < 0 && (full || s.lastT !== 'load')) acts.push({ t: 'unload' });
     if (!u.fight && p.carry < 0) {
       for (let q = 0; q < s.n; q++) {
         const qa = s.players[q].ant;
@@ -593,6 +597,8 @@ export function applyAction(s, a) {
   const pi = actor(s);
   const p = s.players[pi];
   const info = {};
+  if (a.t === 'move') { if (!s.moveTrail) s.moveTrail = []; if (!s.moveTrail.length && p.ant) s.moveTrail.push(antNode(s, pi)); }
+  else if (a.t !== 'end') s.moveTrail = [];
   switch (a.t) {
     case 'inc_tiles': {
       let k = 0;
@@ -632,7 +638,7 @@ export function applyAction(s, a) {
       }
       break;
     }
-    case 'move': moveAnt(s, pi, a.to); break;
+    case 'move': moveAnt(s, pi, a.to); s.moveTrail.push(a.to); break;
     case 'load': {
       const c = s.cells[p.ant.cell];
       const r = s.resources[c.res];
@@ -736,6 +742,7 @@ export function applyAction(s, a) {
     case 'sdone': s.pending = null; break;
     case 'end': log(s, pi, a); endTurn(s); return;
   }
+  s.lastT = a.t;
   if (!s.pending || s.pending.type === 'super') s.actionsThisTurn++;
   log(s, pi, a, info);
 }

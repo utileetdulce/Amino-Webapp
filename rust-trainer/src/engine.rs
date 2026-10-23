@@ -175,6 +175,8 @@ pub struct State {
     pub resources: FV<Res, 12>, pub hills: FV<(u8, u8), 12>, pub blocks: FV<(u8, u8), 12>, pub bridges: FV<Bridge, 12>,
     pub cur: usize, pub turn_no: i32, pub used: [bool; 4], pub actions_this_turn: i32,
     pub pending: Option<Pending>, pub winner: i8, pub over: bool,
+    // anti-loop bookkeeping for AI candidate generation (mirrors JS moveTrail / lastT)
+    pub move_trail: FV<u8, 80>, pub last_t: u8,
 }
 
 // used[]: 0 income, 1 swap, 2 fight, 3 transport
@@ -259,6 +261,7 @@ impl State {
         self.blocks = keep;
         self.used = [false; 4];
         self.actions_this_turn = 0;
+        self.move_trail = FV::new(); self.last_t = 255;
     }
     fn end_turn(&mut self) {
         let cur = self.cur;
@@ -552,7 +555,7 @@ impl State {
                 let interesting = self.interesting_nodes(pi);
                 let mut is_int = [false; 192];
                 for &n in interesting.iter() { is_int[n as usize] = true; }
-                let dests: Vec<u8> = bf.order.iter().filter(|(_, d)| *d > 0).map(|(n, _)| *n).collect();
+                let dests: Vec<u8> = bf.order.iter().filter(|(n, d)| *d > 0 && !self.move_trail.iter().any(|t| t == n)).map(|(n, _)| *n).collect();
                 let mut chosen: Vec<u8> = Vec::with_capacity(16);
                 let mut mark = [false; 192];
                 for &n in &dests { if is_int[n as usize] && !mark[n as usize] { mark[n as usize] = true; chosen.push(n); } }
@@ -561,8 +564,8 @@ impl State {
                 while i < dests.len() { let n = dests[i]; if !mark[n as usize] { mark[n as usize] = true; chosen.push(n); } i += stride; }
                 for n in chosen { acts.push(Act::a1(A_MOVE, n as usize)); }
             }
-            if p.carry < 0 && cs.res >= 0 { acts.push(Act::new(A_LOAD)); }
-            if p.carry >= 0 && cs.res < 0 { acts.push(Act::new(A_UNLOAD)); }
+            if p.carry < 0 && cs.res >= 0 && self.last_t != A_UNLOAD { acts.push(Act::new(A_LOAD)); }
+            if p.carry >= 0 && cs.res < 0 && self.last_t != A_LOAD { acts.push(Act::new(A_UNLOAD)); }
             if !u[2] && p.carry < 0 {
                 for q in 0..self.n {
                     if q != pi {
@@ -726,6 +729,9 @@ impl State {
     pub fn apply(&mut self, a: Act) {
         if self.over { return; }
         let pi = self.actor();
+        if a.t == A_MOVE {
+            if self.move_trail.is_empty() { let n = self.ant_node(pi); if n >= 0 { self.move_trail.push(n as u8); } }
+        } else if a.t != A_END { self.move_trail = FV::new(); }
         match a.t {
             A_INC_TILES => {
                 for _ in 0..4 { if let Some(t) = self.tile_stack.pop() { self.players[pi].hand.push(t); } }
@@ -766,7 +772,7 @@ impl State {
                     self.cells[slot].res = self.resources.len() as i8 - 1;
                 }
             }
-            A_MOVE => self.move_ant(pi, a.a as usize),
+            A_MOVE => { self.move_ant(pi, a.a as usize); if self.move_trail.len() < 80 { self.move_trail.push(a.a); } }
             A_LOAD => {
                 let cell = self.players[pi].ant.unwrap().cell as usize;
                 let ri = self.cells[cell].res;
@@ -878,6 +884,7 @@ impl State {
             A_END => { self.end_turn(); return; }
             _ => {}
         }
+        self.last_t = a.t;
         if self.pending.map_or(true, |p| p.kind == P_SUPER) { self.actions_this_turn += 1; }
     }
 }
@@ -891,6 +898,7 @@ pub fn new_game(num_players: usize, seed: i32) -> State {
         tile_stack: FV::new(), res_stack: FV::new(), card_stack: FV::new(),
         resources: FV::new(), hills: FV::new(), blocks: FV::new(), bridges: FV::new(),
         cur: 0, turn_no: 0, used: [false; 4], actions_this_turn: 0, pending: None, winner: -1, over: false,
+        move_trail: FV::new(), last_t: 255,
     };
     let mut buf = [0u8; 56];
     let mut k = 0;

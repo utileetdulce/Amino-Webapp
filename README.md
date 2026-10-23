@@ -33,6 +33,12 @@ Beide liefern HTTPS, das WebRTC-Multiplayer braucht.
 | Warmstart | optionales Behavior Cloning der Heuristik, danach PPO |
 | Reward | +1 Sieg / −1 Niederlage, optionales Shaping pro erzielten Punkt |
 
+### Modelle, Metadaten und Regelversion
+
+Jedes Modell trägt Metadaten (`meta`): Name, Typ (PPO / AlphaZero), Trainer (Browser / JS / Rust), Erstell- und Trainingsdatum, Trainingsdauer, Spiele, Hyperparameter, Rechner, Git-Stand, Herkunft (von welchem Modell weitertrainiert) und die **Regelversion** (`RULES_VERSION` in `js/engine.js`, Änderungsliste dort). Im Spielen-Tab zeigt die Modellauswahl Datum und Regelversion; ⚠ markiert Modelle, die mit älteren Regeln trainiert wurden, ★ das empfohlene. Im Training-Tab gibt es eine Info-Tabelle. `models/index.json` (erzeugt mit `node tools/update-models-index.mjs`) listet die mitgelieferten Modelle.
+
+**Weitertrainieren oder neu starten?** Solange Netzgröße und Merkmale gleich bleiben, ist Weitertrainieren fast immer besser: Das Netz kennt Wege, Ressourcen und Taktik schon, nur Feinheiten (z. B. die Transport-Hausregel) lernt es um. Neu starten lohnt sich bei geänderten Merkmalen/Architektur oder wenn das alte Modell schlecht ist (zusammengebrochen). Die Trainer warnen, wenn das Ausgangsmodell mit älteren Regeln trainiert wurde.
+
 ### Baumsuche (MCTS, AlphaZero-Stil)
 
 `js/mcts.js` sucht vor jeder Entscheidung mit PUCT: das Netz liefert Aktions-Prioritäten (Policy) und eine Stellungsbewertung (Value), die Suche verbessert beides durch Vorausschau.

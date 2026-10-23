@@ -9,6 +9,8 @@ import os from 'node:os';
 import { Worker } from 'node:worker_threads';
 import { Net, DEFAULT_ARCH } from '../js/nn.js';
 import { azUpdate } from '../js/az.js';
+import { childMeta, touchMeta, RULES_VERSION } from '../js/modelmeta.js';
+import { hostInfo, gitCommit } from './meta-node.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i < 0 ? d : (process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : true); };
 const cfg = {
@@ -19,18 +21,22 @@ const cfg = {
 const out = arg('out', 'models/az.json');
 const init = arg('init', fs.existsSync('models/pretrained.json') ? 'models/pretrained.json' : null);
 
-let net, meta = { games: 0, iter: 0, history: [] };
+let net, meta = { games: 0, iter: 0, history: [] }, parentModel = null;
 if (init && fs.existsSync(init)) {
   const j = JSON.parse(fs.readFileSync(init, 'utf8'));
-  net = Net.fromJSON(j.net);
+  net = Net.fromJSON(j.net); parentModel = j;
   if (arg('resume', false)) meta = { games: j.games || 0, iter: j.iter || 0, history: j.history || [] };
   console.log('init from', init);
 } else { net = new Net(DEFAULT_ARCH); console.log('init: random network (consider warm-starting with tools/train-cli.mjs first)'); }
 
+const t0run = Date.now();
+let mm = childMeta(parentModel, { name: arg('name', out.replace(/^.*\//, '').replace(/\.json$/, '')), kind: 'az', trainer: 'js-cli', hyper: { sims: cfg.sims, topk: cfg.topK, cpuct: cfg.cpuct, qbeta: cfg.qbeta, games: cfg.games, lr: cfg.lr, ratio: cfg.ratio, minBuffer: cfg.minBuffer, batch: cfg.batch, oppMix: cfg.oppMix, depth: cfg.depth }, host: hostInfo(), git: gitCommit(), trainMinutes: arg('resume', false) ? (parentModel?.meta?.trainMinutes || 0) : 0 });
+const minutes0 = mm.trainMinutes;
+if (parentModel && (parentModel.meta?.rulesVersion ?? 0) < RULES_VERSION) console.log(`WARNING: parent model was trained under rules v${parentModel.meta?.rulesVersion ?? '?'} (current v${RULES_VERSION}). Warm-starting is usually fine; start fresh only if features/architecture changed.`);
 const pool = Array.from({ length: cfg.workers }, () => new Worker(new URL('./az-worker.mjs', import.meta.url)));
 const call = (w, msg) => new Promise((res, rej) => { w.once('message', res); w.once('error', rej); w.postMessage(msg); });
 const split = (n, k) => Array.from({ length: k }, (_, i) => Math.floor((n * (i + 1)) / k) - Math.floor((n * i) / k));
-const save = (file) => fs.writeFileSync(file, JSON.stringify({ version: 2, name: 'az', kind: 'mcts', sims: cfg.sims, games: meta.games, iter: meta.iter, history: meta.history, net: net.toJSON() }));
+const save = (file) => { mm = touchMeta(mm, { trainMinutes: minutes0 + (Date.now() - t0run) / 60000 }); fs.writeFileSync(file, JSON.stringify({ version: 3, name: mm.name, kind: 'mcts', sims: cfg.sims, games: meta.games, iter: meta.iter, history: meta.history, meta: mm, net: net.toJSON() })); };
 
 async function evaluate() {
   const g = split(cfg.evalGames, pool.length);

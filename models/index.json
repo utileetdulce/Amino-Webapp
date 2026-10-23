@@ -1,0 +1,59 @@
+{
+ "updated": "2026-10-23T22:03:11.115Z",
+ "models": [
+  {
+   "file": "az.best.json",
+   "id": "m-legacy-models-az-best-json",
+   "name": "AlphaZero M4 (früher Stand)",
+   "kind": "az",
+   "trainer": "js/rust (MacBook M4)",
+   "createdAt": "2026-10-23T18:00:00Z",
+   "updatedAt": "2026-10-23T19:00:00Z",
+   "rulesVersion": 3,
+   "games": 200,
+   "iter": 5,
+   "note": "Bester Zwischenstand des M4-Laufs nach 5 Iterationen (ca. 34–41 % gegen die Heuristik). Nicht empfohlen.",
+   "status": "weak",
+   "default": false,
+   "heuristicRate": 0.40625,
+   "rawRate": 0.34375,
+   "randomRate": null
+  },
+  {
+   "file": "az.json",
+   "id": "m-legacy-models-az-json",
+   "name": "AlphaZero M4 (zusammengebrochen)",
+   "kind": "az",
+   "trainer": "js/rust (MacBook M4)",
+   "createdAt": "2026-10-23T18:00:00Z",
+   "updatedAt": "2026-10-23T20:58:03Z",
+   "rulesVersion": 3,
+   "games": 8360,
+   "iter": 209,
+   "note": "Trainingslauf mit Besuchszahl-Zielen; Spielstärke eingebrochen (9–19 % gegen die Heuristik). Nicht empfohlen.",
+   "status": "weak",
+   "default": false,
+   "heuristicRate": 0.09375,
+   "rawRate": 0.15625,
+   "randomRate": null
+  },
+  {
+   "file": "pretrained.json",
+   "id": "m-legacy-models-pretrained-json",
+   "name": "PPO (Regelversion 3)",
+   "kind": "ppo",
+   "trainer": "js-cli",
+   "createdAt": "2026-10-22T17:15:00Z",
+   "updatedAt": "2026-10-22T18:04:00Z",
+   "rulesVersion": 3,
+   "games": 4980,
+   "iter": 415,
+   "note": "PPO mit Imitations-Warmstart; ca. 84 % gegen die Heuristik. Ohne Anti-Schleifen-Filter trainiert.",
+   "status": "",
+   "default": true,
+   "heuristicRate": 0.8416666666666667,
+   "rawRate": null,
+   "randomRate": 0.9666666666666667
+  }
+ ]
+}

@@ -6,7 +6,8 @@ import { GameController } from './game.js';
 import { describeAction, candidateText, CARD_NAMES, CARD_HELP } from './text.js';
 import { HostLink, GuestLink, openBus, unpack, extractCode } from './net.js';
 import { Net } from './nn.js';
-import { listModels, loadModel, loadPretrained } from './store.js';
+import { listAllModels, fetchModel } from './store.js';
+import { modelLabel, rulesStatus, RULES_VERSION } from './modelmeta.js';
 
 const CARD_ICON = { bridge: '🌉', superimpose: '🧩', blockage: '⛔', wings: '🪽', revenge: '🔥', transport: '🎲' };
 
@@ -22,18 +23,11 @@ export const el = (tag, attrs = {}, ...kids) => {
   return e;
 };
 
-export async function getNetByName(name) {
-  if (name === 'Vortrainiert') {
-    const p = await loadPretrained();
-    return p ? Net.fromJSON(p.net) : null;
-  }
-  const m = loadModel(name);
+export async function getNetByName(key) {
+  const m = await fetchModel(key);
   return m ? Net.fromJSON(m.net) : null;
 }
-export async function modelNames() {
-  const p = await loadPretrained();
-  return [...(p ? ['Vortrainiert'] : []), ...listModels()];
-}
+export const modelNames = listAllModels;
 
 const KIND_OPTIONS = [
   ['human', 'Mensch (an diesem Gerät)'], ['heuristic', 'KI · Heuristik'], ['random', 'KI · Zufall'], ['nn', 'KI · Neuronales Netz'], ['mcts', 'KI · Netz + Baumsuche (MCTS)'], ['remote', 'Online-Mitspieler'],
@@ -79,9 +73,13 @@ export class PlayUI {
       if (seat.kind === 'nn' || seat.kind === 'mcts') {
         if (!this.models.length) row.append(el('span', { class: 'muted' }, 'kein Modell – im Training-Tab erzeugen'));
         else {
-          if (!seat.model || !this.models.includes(seat.model)) seat.model = this.models[0];
-          row.append(el('select', { onchange: (e) => (seat.model = e.target.value) },
-            this.models.map((m) => el('option', { value: m, selected: m === seat.model }, m))));
+          if (!seat.model || !this.models.some((m) => m.key === seat.model)) seat.model = (this.models.find((m) => m.default) || this.models.find((m) => m.status !== 'weak') || this.models[0]).key;
+          row.append(el('select', { onchange: (e) => { seat.model = e.target.value; this.renderSetup(); } },
+            this.models.map((m) => el('option', { value: m.key, selected: m.key === seat.model }, modelLabel(m)))));
+          const cur = this.models.find((m) => m.key === seat.model);
+          const rs = rulesStatus(cur);
+          row.append(el('div', { class: 'modelinfo' + (rs.ok && cur.status !== 'weak' ? '' : ' warn') },
+            `${cur.updatedAt ? 'trainiert ' + new Date(cur.updatedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'Trainingsdatum unbekannt'} · ${rs.text}${cur.note ? ' · ' + cur.note : ''}`));
         }
       }
       if (seat.kind === 'remote') row.append(this.inviteBox(i));
@@ -255,7 +253,8 @@ export class PlayUI {
       } else if (s.kind === 'nn' || s.kind === 'mcts') {
         if (!s.model) { alert('Kein Modell verfügbar. Trainiere eines im Training-Tab.'); return; }
         if (!nets[s.model]) nets[s.model] = await getNetByName(s.model);
-        seats.push({ kind: 'ai', ai: s.kind, model: s.model, name: `${name} (${s.kind === 'mcts' ? 'KI-Suche' : 'KI'})` });
+        const mi = this.models.find((m) => m.key === s.model);
+        seats.push({ kind: 'ai', ai: s.kind, model: s.model, modelLabel: mi ? modelLabel(mi) : s.model, modelWarn: mi && !rulesStatus(mi).ok ? rulesStatus(mi).text : '', name: `${name} (${s.kind === 'mcts' ? 'KI-Suche' : 'KI'})` });
       } else seats.push({ kind: 'ai', ai: s.kind, name: `${name} (${s.kind === 'random' ? 'Zufall' : 'KI'})` });
     }
     const hasRemote = seats.some((s) => s.kind === 'remote');
@@ -751,6 +750,12 @@ export class PlayUI {
       for (const i of order) ib.append(el('div', { class: 'bar' + (i === L.idx ? ' chosen' : '') }, el('i', { style: `width:${(L.probs[i] * 100).toFixed(0)}%` }), el('span', {}, `${candidateText(L.acts[i], s)} · ${(L.probs[i] * 100).toFixed(0)}%`)));
       box.append(ib);
     }
+    const ais = c.seats.map((q, i) => ({ q, i })).filter((x) => x.q.modelLabel);
+    if (ais.length) {
+      const mb = el('div', { class: 'modelbox' }, el('b', {}, 'KI-Modelle in diesem Spiel'));
+      for (const { q, i } of ais) mb.append(el('div', { class: 'modelinfo' + (q.modelWarn ? ' warn' : '') }, el('span', { class: 'dot', style: `background:${s.players[i].color}` }), `${s.players[i].name}: ${q.modelLabel}${q.modelWarn ? ' · ⚠ ' + q.modelWarn : ''}`));
+      box.append(mb);
+    }
     const ul = el('div', { class: 'loglines' });
     this.logLines.slice(-30).reverse().forEach((l) => ul.append(el('div', {}, l)));
     box.append(ul, el('button', { onclick: () => { if (confirm('Spiel verlassen?')) this.closeGame(); } }, 'Zum Menü'));
@@ -763,7 +768,7 @@ export class PlayUI {
     hud.innerHTML = '';
     for (const p of s.players) {
       const store = [0, 1, 2].map((k) => { const n = s.resources.filter((r) => r.owner === p.idx && r.kind === k).length; return n ? el('span', { class: 'chip', title: `${KINDS[k]} = ${p.values[k]} P` }, KIND_ICON[k], '×' + n) : null; });
-      hud.append(el('div', { class: 'hp' + (actor(s) === p.idx && !s.over ? ' active' : '') + (p.idx === me ? ' me' : ''), style: `--pc:${p.color}` },
+      hud.append(el('div', { class: 'hp' + (actor(s) === p.idx && !s.over ? ' active' : '') + (p.idx === me ? ' me' : ''), style: `--pc:${p.color}`, title: this.ctrl.seats[p.idx]?.modelLabel ? `Modell: ${this.ctrl.seats[p.idx].modelLabel}` : null },
         el('span', { class: 'dot', style: `background:${p.color}` }), el('b', {}, p.name), el('span', { class: 'score' }, `${score(s, p.idx)}/${WIN_POINTS}`),
         el('span', { class: 'hm' }, store, el('span', { class: 'chip', title: 'Dreiecke' }, '▲', p.hand.length), el('span', { class: 'chip', title: 'Karten' }, '🃏', p.cards.length),
           p.carry >= 0 ? el('span', { class: 'chip', title: 'trägt' }, '🐜', KIND_ICON[s.resources[p.carry].kind]) : null)));

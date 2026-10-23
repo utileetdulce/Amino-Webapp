@@ -219,3 +219,8 @@ button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
 .bigpop.card { background: linear-gradient(135deg, #fbf0c4, var(--card)); max-width: min(420px, calc(100% - 28px)); }
 .hint { background: #fff4c9; color: #4a3a05; border-radius: 10px; padding: 8px 10px; margin: 0; font-size: 13px; }
 @media (prefers-color-scheme: dark) { .hint { background: #4b4a22; color: #f6efc0; } }
+
+.modelinfo { flex-basis: 100%; font-size: 12px; color: var(--muted); padding: 2px 0 2px 4px; }
+.modelinfo.warn { color: #9a5b00; } @media (prefers-color-scheme: dark) { .modelinfo.warn { color: #f0b860; } }
+.modelbox { background: var(--bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.mdetails { width: 100%; border-collapse: collapse; font-size: 12.5px; } .mdetails td { padding: 3px 6px; border-bottom: 1px solid var(--grid); vertical-align: top; } .mdetails td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }

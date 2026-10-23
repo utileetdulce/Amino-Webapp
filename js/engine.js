@@ -14,6 +14,15 @@ export const TILE_TYPES = [
 export const CARD_TYPES = ['bridge', 'superimpose', 'blockage', 'wings', 'revenge', 'transport'];
 export const KINDS = ['Blume', 'Pilz', 'Raupe'];
 export const WIN_POINTS = 7;
+
+// Bump RULES_VERSION whenever game rules / action generation change in a way that makes older trained weights "stale".
+export const RULES_VERSION = 4;
+export const RULES_CHANGELOG = [
+  { v: 1, date: '2026-10-20', text: 'Erste Regelumsetzung' },
+  { v: 2, date: '2026-10-21', text: 'Ameise verlässt ihr Feld über jeden Weg, wenn sich der Untergrund ändert (Aufladen/Abladen/Hügel zurück)' },
+  { v: 3, date: '2026-10-22', text: 'Hausregel: Ameise mit Ressource bewegt sich nur per Transport; Transport im eigenen Hügel lagert sofort ein' },
+  { v: 4, date: '2026-10-23', text: 'KI-Kandidaten ohne Schleifen (kein Zurück auf besuchte Knoten, kein Laden↔Abladen)' },
+];
 export const MAX_ACTIONS = 70;
 export const MAX_ROUNDS = 90;
 const CARD_DROP_ORDER = ['blockage', 'bridge', 'superimpose', 'transport', 'revenge', 'wings'];

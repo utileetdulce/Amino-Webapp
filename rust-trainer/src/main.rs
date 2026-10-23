@@ -10,6 +10,7 @@ mod agents; mod az; mod engine; mod features; mod fv; mod mcts; mod nn; mod rng;
 
 use agents::*;
 use az::*;
+use engine::RULES_VERSION;
 use features::*;
 use nn::*;
 use rayon::prelude::*;
@@ -32,15 +33,40 @@ fn load_net(path: &str) -> (Net, Value) {
     (Net::from_theta(arch, theta), j)
 }
 
+fn civil(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468; let era = z.div_euclid(146097); let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1; let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+fn iso_now() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let (y, m, d) = civil(secs.div_euclid(86400)); let r = secs.rem_euclid(86400);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z", y, m, d, r / 3600, r % 3600 / 60, r % 60)
+}
+fn git_commit() -> Value {
+    std::process::Command::new("git").args(["rev-parse", "--short", "HEAD"]).output().ok()
+        .and_then(|o| if o.status.success() { String::from_utf8(o.stdout).ok() } else { None }).map(|s| json!(s.trim())).unwrap_or(Value::Null)
+}
+/// Model metadata (see js/modelmeta.js): who/when/how this model was trained and under which rules version.
+fn meta_now(base: &Value, base_minutes: f64, elapsed_min: f64) -> Value {
+    let mut m = base.clone();
+    m["updatedAt"] = json!(iso_now());
+    m["trainMinutes"] = json!(base_minutes + elapsed_min);
+    m["rulesVersion"] = json!(RULES_VERSION);
+    m
+}
+
 fn fmt6(x: f32) -> String {
     let v: f64 = format!("{:.6}", x).parse().unwrap();
     if v == 0.0 { "0".into() } else { format!("{}", v) }
 }
 
-fn save(path: &str, net: &Net, sims: usize, games: u64, iter: u64, history: &[Value]) {
+fn save(path: &str, net: &Net, sims: usize, games: u64, iter: u64, history: &[Value], meta: &Value) {
     let mut s = String::with_capacity(net.theta.len() * 10 + 1024);
-    s.push_str(&format!("{{\"version\":2,\"name\":\"az\",\"kind\":\"mcts\",\"sims\":{},\"games\":{},\"iter\":{},\"history\":{},\"net\":{{\"arch\":{{\"h1\":{},\"h2\":{},\"hv\":{}}},\"theta\":[",
-        sims, games, iter, serde_json::to_string(history).unwrap(), net.arch.h1, net.arch.h2, net.arch.hv));
+    s.push_str(&format!("{{\"version\":3,\"name\":{},\"kind\":\"mcts\",\"sims\":{},\"games\":{},\"iter\":{},\"history\":{},\"meta\":{},\"net\":{{\"arch\":{{\"h1\":{},\"h2\":{},\"hv\":{}}},\"theta\":[",
+        serde_json::to_string(&meta["name"]).unwrap(), sims, games, iter, serde_json::to_string(history).unwrap(), serde_json::to_string(meta).unwrap(), net.arch.h1, net.arch.h2, net.arch.hv));
     for (i, x) in net.theta.iter().enumerate() { if i > 0 { s.push(','); } s.push_str(&fmt6(*x)); }
     s.push_str("]}}");
     let tmp = format!("{}.tmp", path);
@@ -126,9 +152,16 @@ fn main() {
     rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().unwrap();
     let mut rng = Rng::new(seed);
     let (mut games_total, mut iter0, mut history): (u64, u64, Vec<Value>) = (0, 0, Vec::new());
+    let mut parent_info = Value::Null; let mut base_minutes = 0.0f64;
     let mut net = match &init {
         Some(p) if std::path::Path::new(p).exists() => {
             let (n, j) = load_net(p);
+            if let Some(pm) = j.get("meta") {
+                parent_info = json!({"id": pm["id"], "name": pm["name"], "updatedAt": pm["updatedAt"], "rulesVersion": pm["rulesVersion"], "games": j["games"]});
+                if arg("resume").is_some() { base_minutes = pm["trainMinutes"].as_f64().unwrap_or(0.0); }
+            }
+            if j["meta"]["rulesVersion"].as_u64().unwrap_or(0) < RULES_VERSION as u64 { println!("WARNING: parent model was trained under rules v{} (current v{}). Warm-starting is usually fine; start fresh only if features/architecture changed.", j["meta"]["rulesVersion"], RULES_VERSION); }
+            if j.get("meta").is_none() { parent_info = json!({"id": null, "name": p, "updatedAt": null, "rulesVersion": null, "games": j["games"]}); }
             if arg("resume").is_some() {
                 games_total = j["games"].as_u64().unwrap_or(0); iter0 = j["iter"].as_u64().unwrap_or(0);
                 history = j["history"].as_array().cloned().unwrap_or_default();
@@ -141,6 +174,17 @@ fn main() {
         "evalEvery": eval_every, "evalGames": eval_games, "oppMix": opp_mix, "depth": depth, "minutes": minutes, "iters": iters, "tauMoves": tau_moves, "seed": seed}));
 
     let t0 = Instant::now();
+    let stem = std::path::Path::new(&out).file_stem().and_then(|x| x.to_str()).unwrap_or("az").to_string();
+    let now0 = iso_now();
+    let meta0 = json!({
+        "id": format!("m-{:x}-{:04x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seed & 0xffff),
+        "name": arg("name").unwrap_or(stem), "kind": "az", "trainer": "rust", "createdAt": now0, "updatedAt": now0, "rulesVersion": RULES_VERSION,
+        "parent": parent_info,
+        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "games": games, "lr": lr, "ratio": ratio,
+                  "minBuffer": min_buffer, "batch": batch, "oppMix": opp_mix, "depth": depth, "tauMoves": tau_moves},
+        "host": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "cpus": ncpu, "workers": workers},
+        "git": git_commit(), "trainMinutes": base_minutes, "note": ""
+    });
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
     let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0) };
@@ -174,14 +218,14 @@ fn main() {
         games_total += n_games; iter0 += 1;
         println!("iter {} games {} buf {} steps {} turns/game {:.0} play {:.0}s train {:.1}s  ploss {:.3} vloss {:.3}  vsHeur(self-play seats) {}-{}-{}",
             iter0, games_total, buffer.len(), steps_eff, turns as f64 / n_games as f64, t_play, t_train, ploss, vloss, vw, vd, vl);
-        save(&out, &net, sims, games_total, iter0, &history);
+        save(&out, &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0));
         if eval_every > 0 && iter0 % eval_every == 0 {
             let raw = eval(&net, eval_games, false, sims, depth, rng.u64());
             let srch = eval(&net, eval_games, true, sims, depth, rng.u64());
             history.push(json!({"iter": iter0, "games": games_total, "random": raw.rate(), "heuristic": srch.rate(), "rawHeuristic": raw.rate()}));
             println!("EVAL iter {}: raw net vs heuristic {:.0}% | MCTS({}) vs heuristic {:.0}%", iter0, raw.rate() * 100.0, sims, srch.rate() * 100.0);
-            if srch.rate() >= best { best = srch.rate(); save(&format!("{}.best.json", out.trim_end_matches(".json")), &net, sims, games_total, iter0, &history); }
-            save(&out, &net, sims, games_total, iter0, &history);
+            if srch.rate() >= best { best = srch.rate(); save(&format!("{}.best.json", out.trim_end_matches(".json")), &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0)); }
+            save(&out, &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0));
         }
     }
     println!("done {:.1} min", t0.elapsed().as_secs_f64() / 60.0);

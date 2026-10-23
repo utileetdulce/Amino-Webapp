@@ -7,7 +7,8 @@ import { NNAgent, HeuristicAgent } from './agents.js';
 import { SF_NAMES, AF_NAMES, SF, AF } from './features.js';
 import { candidateText } from './text.js';
 import { el } from './ui-play.js';
-import { listModels, loadModel, saveModel, deleteModel, loadPretrained, downloadJSON } from './store.js';
+import { saveModel, deleteModel, downloadJSON, listAllModels, fetchModel } from './store.js';
+import { childMeta, touchMeta, modelLabel, modelDetails, RULES_VERSION } from './modelmeta.js';
 import { DEFAULT_PPO } from './selfplay.js';
 
 function heat(canvas, arr, rows, cols, { cell = 6, labels = null, labelW = 0 } = {}) {
@@ -93,13 +94,15 @@ export class TrainUI {
     const mm = el('div', { class: 'card' });
     mm.append(el('h3', {}, 'Modelle'));
     this.nameInp = el('input', { type: 'text', value: 'Mein Modell', placeholder: 'Modellname' });
-    this.modelSel = el('select');
+    this.modelSel = el('select', { onchange: () => this.showInfo() });
+    this.infoBox = el('div', { class: 'scroll' });
     mm.append(el('div', { class: 'grp' }, this.nameInp, el('button', { onclick: () => this.save() }, '💾 Speichern')));
     mm.append(el('div', { class: 'grp' }, this.modelSel,
       el('button', { onclick: () => this.loadSel() }, 'Laden & weiter trainieren'),
       el('button', { onclick: () => this.delSel() }, '🗑')));
     const file = el('input', { type: 'file', accept: 'application/json', hidden: true, onchange: (e) => this.importFile(e.target.files[0]) });
     mm.append(el('div', { class: 'grp' }, el('button', { onclick: () => this.exportCur() }, '⬇ Export (.json)'), el('button', { onclick: () => file.click() }, '⬆ Import'), file));
+    mm.append(this.infoBox);
     left.append(mm);
     this.refreshModels();
 
@@ -169,6 +172,7 @@ export class TrainUI {
   }
   toggle() {
     this.running = !this.running;
+    if (this.running) this.runStart = Date.now(); else if (this.runStart) { this.runMs = (this.runMs || 0) + Date.now() - this.runStart; this.runStart = null; }
     this.send({ cmd: this.running ? 'start' : 'pause' });
     this.btnStart.textContent = this.running ? '⏸ Pause' : '▶ Training starten';
   }
@@ -176,7 +180,7 @@ export class TrainUI {
   reset() {
     this.running = false; this.send({ cmd: 'pause' }); this.btnStart.textContent = '▶ Training starten';
     for (const c of [this.chWin, this.chRet, this.chEnt, this.chLoss]) c.clear();
-    this.retEma = null; this.net = new Net(DEFAULT_ARCH);
+    this.retEma = null; this.net = new Net(DEFAULT_ARCH); this.parentModel = null; this.meta = null; this.runMs = 0; this.runStart = null;
     this.initNet();
     this.drawNet(); this.newWatch();
   }
@@ -215,24 +219,36 @@ export class TrainUI {
 
   // ----- models -----
   async refreshModels() {
-    const pre = await loadPretrained();
-    const names = [...(pre ? ['Vortrainiert'] : []), ...listModels()];
+    this.modelList = await listAllModels();
     this.modelSel.innerHTML = '';
-    for (const nme of names) this.modelSel.append(el('option', { value: nme }, nme));
+    for (const m of this.modelList) this.modelSel.append(el('option', { value: m.key }, modelLabel(m)));
+    this.showInfo();
+  }
+  async showInfo() {
+    const key = this.modelSel.value;
+    this.infoBox.innerHTML = '';
+    if (!key) return;
+    const obj = await fetchModel(key);
+    if (!obj) return;
+    const tbl = el('table', { class: 'mdetails' });
+    for (const [k, v] of modelDetails({ ...obj, name: obj.meta?.name || obj.name })) tbl.append(el('tr', {}, el('td', {}, k), el('td', {}, String(v))));
+    this.infoBox.append(tbl);
   }
   async loadSel() {
-    const nme = this.modelSel.value;
-    let obj = nme === 'Vortrainiert' ? await loadPretrained() : loadModel(nme);
+    const key = this.modelSel.value;
+    const obj = await fetchModel(key);
     if (!obj) return;
-    this.loadObj(obj, nme);
+    this.loadObj(obj, this.modelList.find((m) => m.key === key)?.name || obj.name || 'Modell');
   }
   loadObj(obj, nme) {
     for (const c of [this.chWin, this.chRet, this.chEnt, this.chLoss]) c.clear();
     for (const h of obj.history || []) { this.chWin.add('vs Zufall', h.games, h.random); this.chWin.add('vs Heuristik', h.games, h.heuristic); }
     this.chWin.draw();
-    this.nameInp.value = nme === 'Vortrainiert' ? 'Mein Modell' : nme;
+    this.parentModel = obj; this.meta = null; this.runMs = 0; this.runStart = null;
+    this.nameInp.value = (obj.meta?.name || nme) + ' (weiter)';
     this.initNet(obj.net, { games: obj.games || 0, iter: obj.iter || 0 });
-    this.status.textContent = `Modell „${nme}“ geladen (${obj.games || 0} Spiele).`;
+    const rv = obj.meta?.rulesVersion;
+    this.status.textContent = `Modell „${nme}“ geladen (${obj.games || 0} Spiele).` + (rv != null && rv < RULES_VERSION ? ` ⚠ Es wurde mit Regelversion ${rv} trainiert (aktuell ${RULES_VERSION}). Weitertrainieren ist meist sinnvoll; bei geänderten Merkmalen/Netzgröße neu starten.` : '');
   }
   async save() {
     this.send({ cmd: 'snapshot' });
@@ -242,12 +258,19 @@ export class TrainUI {
     this.status.textContent = ok ? `Gespeichert als „${nme}“ – jetzt im Spielen-Tab als KI wählbar.` : 'Speichern fehlgeschlagen (Speicher voll?)';
     this.refreshModels();
   }
+  runMinutes() { return ((this.runMs || 0) + (this.runStart ? Date.now() - this.runStart : 0)) / 60000; }
   current(name) {
     const hist = this.chWin.series.map((s) => s.pts);
     const history = hist[0].map(([g, r], i) => ({ games: g, random: r, heuristic: hist[1][i]?.[1] ?? 0, iter: 0 }));
-    return { version: 1, name, games: this.stats?.games || 0, iter: this.stats?.iter || 0, history, net: this.net.toJSON() };
+    if (!this.meta) {
+      this.meta = childMeta(this.parentModel, { name, kind: 'ppo', trainer: 'browser', hyper: { ...this.cfg(), eps: Math.max(1, +this.inp.eps.value | 0), opponent: this.oppSel.value },
+        host: { os: navigator.platform || 'browser', arch: '', cpus: navigator.hardwareConcurrency || null }, trainMinutes: this.parentModel?.meta?.trainMinutes || 0 });
+      this.baseMinutes = this.meta.trainMinutes;
+    }
+    this.meta = touchMeta(this.meta, { name, trainMinutes: (this.baseMinutes || 0) + this.runMinutes() });
+    return { version: 3, name, games: this.stats?.games || 0, iter: this.stats?.iter || 0, history, meta: this.meta, net: this.net.toJSON() };
   }
-  delSel() { const n = this.modelSel.value; if (n && n !== 'Vortrainiert') { deleteModel(n); this.refreshModels(); } }
+  delSel() { const k = this.modelSel.value; if (k && k.startsWith('local:')) { deleteModel(k.slice(6)); this.refreshModels(); } else if (k) this.status.textContent = 'Mitgelieferte Modelle lassen sich nicht löschen.'; }
   exportCur() { const n = this.nameInp.value.trim() || 'amino-modell'; downloadJSON(n + '.json', this.current(n)); }
   async importFile(f) {
     if (!f) return;

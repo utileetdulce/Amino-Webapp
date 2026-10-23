@@ -28,6 +28,8 @@ pub const A_INC_CARD: u8 = 1;
 pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
+/// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
+pub const RULES_VERSION: u32 = 4;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
 pub const A_UNLOAD: u8 = 7;

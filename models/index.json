@@ -1,6 +1,24 @@
 {
- "updated": "2026-10-23T22:03:11.115Z",
+ "updated": "2026-10-23T23:26:16.357Z",
  "models": [
+  {
+   "file": "az-kurz.json",
+   "id": "m-1a16b091bbd-6200",
+   "name": "AZ kurz (Rust, Q-Ziele)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-23T23:12:01.000Z",
+   "updatedAt": "2026-10-23T23:17:56.000Z",
+   "rulesVersion": 4,
+   "games": 3200,
+   "iter": 100,
+   "note": "Kurzlauf (100 Iterationen, 3.200 Spiele) ab dem PPO-Modell mit Q-Zielen und Top-12-Suche. Direktvergleich gegen das PPO-Modell: 66 % (Netz allein, 300 Partien) bzw. 64 % (mit Suche, 80 Partien); ca. 82–92 % gegen die Heuristik.",
+   "status": "",
+   "default": true,
+   "heuristicRate": 0.925,
+   "rawRate": 0.825,
+   "randomRate": null
+  },
   {
    "file": "az.best.json",
    "id": "m-legacy-models-az-best-json",
@@ -48,9 +66,9 @@
    "rulesVersion": 3,
    "games": 4980,
    "iter": 415,
-   "note": "PPO mit Imitations-Warmstart; ca. 84 % gegen die Heuristik. Ohne Anti-Schleifen-Filter trainiert.",
+   "note": "PPO mit Imitations-Warmstart; ca. 84 % gegen die Heuristik. Ausgangspunkt von „AZ kurz“.",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": 0.8416666666666667,
    "rawRate": null,
    "randomRate": 0.9666666666666667

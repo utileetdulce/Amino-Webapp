@@ -54,6 +54,8 @@ node tools/train-az.mjs --init models/pretrained.json --out models/az.json --sim
 node tools/mcts-bench.mjs models/az.json 96 20      # Suche vs. Heuristik messen
 ```
 
+**Erfahrungen (Stand Oktober 2026):** Besuchszahlen als Lernziel (Standard-AlphaZero) flachten bei ~100 Simulationen die Policy ab und zerstörten das Netz; deshalb sind Top-12-Suche und Q-basierte Ziele (`--topk`, `--qbeta`) Standard. Ein sehr langer Lauf (31.000 Spiele, Lernrate 1e-4) driftete trotzdem ab (gegen die Heuristik 85 % → 62 %, im Direktvergleich nicht besser als der Start), ein kurzer Lauf (100 Iterationen, Lernrate 5e-5) schlug das Ausgangsmodell dagegen klar (66 % im Direktvergleich). Der Rust-Trainer hat daher **Champion-Gating**: alle `--gate-every` Iterationen (Standard 20) spielt der aktuelle Stand gegen den Champion; ab `--gate-win` (0,55) wird er neuer Champion (`<out>.champion.json`), unter `--gate-revert` (0,40) wird auf den Champion zurückgesetzt. Nimm für das Spiel die `.champion.json`. Gemessen wird besser im Direktvergleich (`node tools/h2h.mjs A.json B.json 200`) als nur gegen die Heuristik.
+
 Wichtige Optionen: `--sims` (Simulationen pro Zug), `--games` (Selbstspiele je Iteration), `--steps/--batch/--lr` (Updates), `--buffer` (Replay-Größe), `--eval-every/--eval-games`, `--opp-mix` (Anteil Spiele gegen die Heuristik zur Stabilisierung), `--resume` (Zähler fortführen). Es wird laufend `models/az.json` und der beste Stand als `models/az.best.json` gespeichert – beide lassen sich im Training-Tab importieren und im Spiel auswählen.
 
 Headless-Training (z. B. für ein stärkeres Modell):

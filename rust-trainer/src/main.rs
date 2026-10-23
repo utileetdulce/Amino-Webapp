@@ -77,6 +77,23 @@ fn save(path: &str, net: &Net, sims: usize, games: u64, iter: u64, history: &[Va
 struct Ev { w: u32, d: u32, l: u32 }
 impl Ev { fn rate(&self) -> f64 { (self.w as f64 + 0.5 * self.d as f64) / ((self.w + self.d + self.l).max(1) as f64) } }
 
+fn mk_agent<'a>(n: &'a Net, search: bool, sims: usize, depth: i32) -> Agent<'a> {
+    if search { Agent::Search(mcts::Mcts::new(n, sims.max(8), depth, 0.0)) } else { Agent::Nn(n, 0.5) }
+}
+
+/// Head-to-head (current vs champion); `search` plays both sides with MCTS, otherwise with the raw policy. Returns A's record.
+fn eval_h2h(a: &Net, b: &Net, games: usize, search: bool, sims: usize, depth: i32, base: u64) -> Ev {
+    let res: Vec<i32> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(base ^ (g as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let seat = g % 2;
+        let (ma, mb) = (mk_agent(a, search, sims, depth), mk_agent(b, search, sims, depth));
+        let ag = if seat == 0 { [ma, mb] } else { [mb, ma] };
+        let w = play_game(&ag, &mut rng);
+        if w < 0 { 0 } else if w as usize == seat { 1 } else { -1 }
+    }).collect();
+    Ev { w: res.iter().filter(|&&r| r == 1).count() as u32, d: res.iter().filter(|&&r| r == 0).count() as u32, l: res.iter().filter(|&&r| r == -1).count() as u32 }
+}
+
 fn eval(net: &Net, games: usize, search: bool, sims: usize, depth: i32, base: u64) -> Ev {
     let res: Vec<i32> = (0..games).into_par_iter().map(|g| {
         let mut rng = Rng::new(base ^ (g as u64).wrapping_mul(0x9E3779B97F4A7C15));
@@ -131,6 +148,10 @@ fn main() {
     let games = argf("games", 24.0) as usize;
     let steps = argf("steps", 150.0) as usize; // upper bound of minibatches per iteration
     let pcoef = argf("pcoef", 1.0) as f32; let vcoef = argf("vcoef", 1.0) as f32; // loss weights (0 freezes that head)
+    let gate_every = argf("gate-every", 20.0) as u64; // champion gating: every N iterations play current vs champion (0 = off)
+    let gate_games = argf("gate-games", 60.0) as usize;
+    let gate_win = argf("gate-win", 0.55); // promote the current net to champion at >= this score
+    let gate_revert = argf("gate-revert", 0.40); // go back to the champion if the score is below this (stops drift); 0 = never
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
@@ -187,6 +208,7 @@ fn main() {
     });
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
+    let mut champion = net.clone(); let mut champ_iter = iter0;
     let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0) };
     for _ in 0..iters {
         if minutes > 0.0 && t0.elapsed().as_secs_f64() / 60.0 > minutes { break; }
@@ -226,6 +248,20 @@ fn main() {
             println!("EVAL iter {}: raw net vs heuristic {:.0}% | MCTS({}) vs heuristic {:.0}%", iter0, raw.rate() * 100.0, sims, srch.rate() * 100.0);
             if srch.rate() >= best { best = srch.rate(); save(&format!("{}.best.json", out.trim_end_matches(".json")), &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0)); }
             save(&out, &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0));
+        }
+        if gate_every > 0 && iter0 % gate_every == 0 {
+            let g = eval_h2h(&net, &champion, gate_games, false, sims, depth, rng.u64());
+            let rate = g.rate();
+            let mut verdict = "kept".to_string();
+            if rate >= gate_win {
+                champion = net.clone(); champ_iter = iter0; verdict = "PROMOTED".into();
+                let mut m = meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0);
+                m["note"] = json!(format!("Champion nach Gating (Iter. {}, {:.0} % gegen den vorigen Champion)", iter0, rate * 100.0));
+                save(&format!("{}.champion.json", out.trim_end_matches(".json")), &net, sims, games_total, iter0, &history, &m);
+            } else if gate_revert > 0.0 && rate < gate_revert {
+                net = champion.clone(); verdict = format!("REVERTED to champion of iter {}", champ_iter);
+            }
+            println!("GATE iter {}: current vs champion(iter {}) {:.0}% ({}-{}-{}) -> {}", iter0, champ_iter, rate * 100.0, g.w, g.d, g.l, verdict);
         }
     }
     println!("done {:.1} min", t0.elapsed().as_secs_f64() / 60.0);

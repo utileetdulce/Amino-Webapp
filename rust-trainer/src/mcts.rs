@@ -10,6 +10,9 @@ const NONE: u32 = u32::MAX;
 /// at a node: with few simulations per decision a wide tree yields flat visit counts, which would flatten the policy when used as a target.
 pub static TOPK: AtomicUsize = AtomicUsize::new(12);
 pub static CPUCT_MILLI: AtomicUsize = AtomicUsize::new(1250);
+/// 1 = (off by default; measured neutral: 48% vs off) besides the top-k, always keep the best candidate of every action type (placements are split over dozens of
+/// candidates with small priors each, so plain top-k never evaluates them and the targets starve them; see README).
+pub static TYPEDIV: AtomicUsize = AtomicUsize::new(0);
 
 struct Child { act: Act, n: u32, w: f64, p: f32, node: u32 }
 struct Node { n: u32, w: f64, expanded: bool, children: Vec<Child> }
@@ -21,7 +24,7 @@ pub struct Mcts<'a> {
     pub net: &'a Net, pub sims: usize, pub cpuct: f64, pub max_depth: i32, pub max_cands: usize,
     pub dirichlet: f64, pub dir_alpha: f64, pub fpu: f64,
     /// diagnostics (bench): candidates kept per node, leaf value off (0 = pure prior search), determinization off (sees hidden info)
-    pub topk: usize, pub value_zero: bool, pub determinize: bool,
+    pub topk: usize, pub value_zero: bool, pub determinize: bool, pub type_div: bool,
 }
 
 pub fn determinize(s: &mut State, observer: usize, rng: &mut Rng) {
@@ -76,7 +79,7 @@ fn gamma_sample(k: f64, rng: &mut Rng) -> f64 {
 impl<'a> Mcts<'a> {
     pub fn new(net: &'a Net, sims: usize, max_depth: i32, dirichlet: f64) -> Mcts<'a> {
         Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0,
-            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true }
+            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0 }
     }
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
@@ -141,6 +144,11 @@ impl<'a> Mcts<'a> {
                 order.sort_by(|&a, &b| pr[b].partial_cmp(&pr[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
                 let mut keep: Vec<usize> = order.iter().copied().take(k).collect();
                 if let Some(ei) = acts.iter().position(|a| a.t == A_END) { if !keep.contains(&ei) { keep.push(ei); } }
+                if self.type_div {
+                    let mut seen = [false; 24];
+                    for &i in &keep { seen[acts[i].t as usize] = true; }
+                    for &i in &order { let t = acts[i].t as usize; if !seen[t] { seen[t] = true; keep.push(i); } }
+                }
                 keep.sort();
                 let mut pk: Vec<f64> = keep.iter().map(|&i| pr[i] as f64).collect();
                 let tot: f64 = pk.iter().sum::<f64>().max(1e-12);

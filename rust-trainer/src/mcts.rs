@@ -13,6 +13,10 @@ pub static CPUCT_MILLI: AtomicUsize = AtomicUsize::new(1250);
 /// 1 = (off by default; measured neutral: 48% vs off) besides the top-k, always keep the best candidate of every action type (placements are split over dozens of
 /// candidates with small priors each, so plain top-k never evaluates them and the targets starve them; see README).
 pub static TYPEDIV: AtomicUsize = AtomicUsize::new(0);
+/// 1 = stop a simulation right after a chance action (dice, tile/card/resource draw) and use the value net there:
+/// the open-loop tree otherwise mixes follow-up statistics of different outcomes, which undervalues chance actions.
+pub static CHANCELEAF: AtomicUsize = AtomicUsize::new(0);
+#[inline] fn is_chance(a: &Act) -> bool { a.t == A_TRANSPORT || a.t == A_INC_TILES || a.t == A_INC_CARD || (a.t == A_PLACE && a.c == 2) }
 
 struct Child { act: Act, n: u32, w: f64, p: f32, node: u32 }
 struct Node { n: u32, w: f64, expanded: bool, children: Vec<Child> }
@@ -24,7 +28,7 @@ pub struct Mcts<'a> {
     pub net: &'a Net, pub sims: usize, pub cpuct: f64, pub max_depth: i32, pub max_cands: usize,
     pub dirichlet: f64, pub dir_alpha: f64, pub fpu: f64,
     /// diagnostics (bench): candidates kept per node, leaf value off (0 = pure prior search), determinization off (sees hidden info)
-    pub topk: usize, pub value_zero: bool, pub determinize: bool, pub type_div: bool,
+    pub topk: usize, pub value_zero: bool, pub determinize: bool, pub type_div: bool, pub chance_leaf: bool,
 }
 
 pub fn determinize(s: &mut State, observer: usize, rng: &mut Rng) {
@@ -79,7 +83,7 @@ fn gamma_sample(k: f64, rng: &mut Rng) -> f64 {
 impl<'a> Mcts<'a> {
     pub fn new(net: &'a Net, sims: usize, max_depth: i32, dirichlet: f64) -> Mcts<'a> {
         Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0,
-            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0 }
+            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0, chance_leaf: CHANCELEAF.load(Ordering::Relaxed) != 0 }
     }
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
@@ -192,6 +196,11 @@ impl<'a> Mcts<'a> {
             }
             node = nodes[node].children[best].node as usize;
             acts = self.advance_forced(s);
+            if self.chance_leaf && is_chance(&best_act) && !s.over {
+                let (v, _) = self.evaluate(s, &acts, false);
+                value = if s.actor() == observer { v as f64 } else { -(v as f64) };
+                break;
+            }
         }
         for &(nd, ci) in &path {
             let n = &mut nodes[nd]; n.n += 1; n.w += value;

@@ -150,7 +150,7 @@ fn parse_agent<'a>(spec: &str, nets: &'a std::collections::HashMap<String, Net>)
                 let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
                 match k {
                     "topk" => m.topk = v.parse().unwrap(), "cpuct" => m.cpuct = v.parse().unwrap(), "depth" => m.max_depth = v.parse().unwrap(),
-                    "v0" => m.value_zero = true, "div" => m.type_div = v != "0", "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
+                    "v0" => m.value_zero = true, "div" => m.type_div = v != "0", "cleaf" => m.chance_leaf = v != "0", "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
                 }
             }
             Agent::Search(m)
@@ -219,7 +219,8 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
     let rs: Vec<D> = (0..games).into_par_iter().map(|g| {
         let mut rng = Rng::new(1234 + g as u64 * 7919);
         let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
-        let m = mcts::Mcts::new(&net, sims, 18, 0.25);
+        let mut m = mcts::Mcts::new(&net, sims, 18, 0.25);
+        if std::env::var("DIAG_CLEAF").is_ok() { m.chance_leaf = true; }
         let mut rec: Vec<(usize, f64, bool, f64, f64, f64, Option<f64>, Option<f64>, f64)> = Vec::new();
         let mut prev: Option<(usize, f64, bool, usize)> = None; // (actor, v, was 'end', action type)
         let (mut dty, mut dtn) = ([0f64; 24], [0f64; 24]);
@@ -304,6 +305,7 @@ fn main() {
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
+    mcts::CHANCELEAF.store(argf("chance-leaf", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::TYPEDIV.store(argf("type-div", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::CPUCT_MILLI.store((argf("cpuct", 1.25) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);
     let batch = argf("batch", 128.0) as usize;
@@ -352,7 +354,7 @@ fn main() {
         "id": format!("m-{:x}-{:04x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seed & 0xffff),
         "name": arg("name").unwrap_or(stem), "kind": "az", "trainer": "rust", "createdAt": now0, "updatedAt": now0, "rulesVersion": RULES_VERSION,
         "parent": parent_info,
-        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "typeDiv": argf("type-div", 0.0) != 0.0, "drawZ": argf("draw-z", 0.0), "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
+        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "typeDiv": argf("type-div", 0.0) != 0.0, "drawZ": argf("draw-z", 0.0), "chanceLeaf": argf("chance-leaf", 0.0) != 0.0, "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
                   "minBuffer": min_buffer, "batch": batch, "oppMix": opp_mix, "depth": depth, "tauMoves": tau_moves},
         "host": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "cpus": ncpu, "workers": workers},
         "git": git_commit(), "trainMinutes": base_minutes, "note": ""

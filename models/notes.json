@@ -68,5 +68,15 @@
   "status": "",
   "name": "AZ q3 + Remis −0,5",
   "note": "10 Minuten ab „AZ kurz + zugkonsistenter Value“ mit --qbeta 3 --draw-z -0.5: stabil; Netz allein 57 % gegen den Startpunkt (600 Partien), mit Suche 48 %."
+ },
+ "az-v3.json": {
+  "status": "weak",
+  "name": "AZ v3 (q3, Remis −0,5, 60 Min., Negativ-Ergebnis)",
+  "note": "60 Minuten ab „AZ kurz + zugkonsistenter Value“ mit --qbeta 3 --draw-z -0.5 und Gating mit Suche: 75 Gates, nie befördert. Mit Suche 46 %, Netz allein 50 % gegen den Startpunkt (600 Partien)."
+ },
+ "az-v3.best.json": {
+  "status": "weak",
+  "name": "AZ v3 (bester Zwischenstand)",
+  "note": "Bester Zwischenstand des v3-Laufs nach 16 Testpartien (verrauscht)."
  }
 }

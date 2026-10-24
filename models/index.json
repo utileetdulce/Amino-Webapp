@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-24T20:36:17.017Z",
+ "updated": "2026-10-24T21:37:45.936Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -161,6 +161,42 @@
    "default": false,
    "heuristicRate": 0.9375,
    "rawRate": 0.8125,
+   "randomRate": null
+  },
+  {
+   "file": "az-v3.best.json",
+   "id": "m-1a16fa05b7b-2200",
+   "name": "AZ v3 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-24T20:35:42.000Z",
+   "updatedAt": "2026-10-24T21:33:20.000Z",
+   "rulesVersion": 5,
+   "games": 73000,
+   "iter": 730,
+   "note": "Bester Zwischenstand des v3-Laufs nach 16 Testpartien (verrauscht).",
+   "status": "weak",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.8125,
+   "randomRate": null
+  },
+  {
+   "file": "az-v3.json",
+   "id": "m-1a16fa05b7b-2200",
+   "name": "AZ v3 (q3, Remis −0,5, 60 Min., Negativ-Ergebnis)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-24T20:35:42.000Z",
+   "updatedAt": "2026-10-24T21:35:47.000Z",
+   "rulesVersion": 5,
+   "games": 75600,
+   "iter": 756,
+   "note": "60 Minuten ab „AZ kurz + zugkonsistenter Value“ mit --qbeta 3 --draw-z -0.5 und Gating mit Suche: 75 Gates, nie befördert. Mit Suche 46 %, Netz allein 50 % gegen den Startpunkt (600 Partien).",
+   "status": "weak",
+   "default": false,
+   "heuristicRate": 0.90625,
+   "rawRate": 0.875,
    "randomRate": null
   },
   {

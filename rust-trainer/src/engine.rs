@@ -29,7 +29,8 @@ pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
 /// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
-pub const RULES_VERSION: u32 = 4;
+pub const RULES_VERSION: u32 = 5;
+pub const MAX_AI_CARDS: usize = 5;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
 pub const A_UNLOAD: u8 = 7;
@@ -525,9 +526,11 @@ impl State {
         let u = &self.used;
 
         if !u[0] {
+            // AI only: with an empty hand income must be tiles (mirrors js/engine.js; stops card hoarding / stagnation)
+            let must_tiles = p.hand.is_empty() && !self.tile_stack.is_empty();
             if !self.tile_stack.is_empty() { acts.push(Act::new(A_INC_TILES)); }
-            if !self.card_stack.is_empty() { acts.push(Act::new(A_INC_CARD)); }
-            for h in self.hill_cells(pi).iter() { acts.push(Act::a1(A_INC_HILL, *h as usize)); }
+            if !self.card_stack.is_empty() && !must_tiles && p.cards.len() < MAX_AI_CARDS { acts.push(Act::new(A_INC_CARD)); }
+            if !must_tiles { for h in self.hill_cells(pi).iter() { acts.push(Act::a1(A_INC_HILL, *h as usize)); } }
         }
         if !u[1] && !p.hand.is_empty() {
             for q in 0..self.n {

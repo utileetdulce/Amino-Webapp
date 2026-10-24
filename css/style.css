@@ -224,3 +224,11 @@ button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
 .modelinfo.warn { color: #9a5b00; } @media (prefers-color-scheme: dark) { .modelinfo.warn { color: #f0b860; } }
 .modelbox { background: var(--bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .mdetails { width: 100%; border-collapse: collapse; font-size: 12.5px; } .mdetails td { padding: 3px 6px; border-bottom: 1px solid var(--grid); vertical-align: top; } .mdetails td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+
+@media (max-width: 860px) {
+  /* player list: one compact row per player, stacked */
+  .hud { left: 6px; right: auto; top: 6px; max-width: 82vw; flex-direction: column; overflow: visible; padding: 0; gap: 3px; pointer-events: none; }
+  .hp { flex: 0 0 auto; flex-wrap: wrap; padding: 2px 8px; font-size: 12px; }
+  .hp .hm { width: auto; flex-wrap: wrap; }
+  .banner { left: 50%; top: calc(var(--hudh, 0px) + 12px); }
+}

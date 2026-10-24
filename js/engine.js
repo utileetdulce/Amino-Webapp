@@ -16,12 +16,14 @@ export const KINDS = ['Blume', 'Pilz', 'Raupe'];
 export const WIN_POINTS = 7;
 
 // Bump RULES_VERSION whenever game rules / action generation change in a way that makes older trained weights "stale".
-export const RULES_VERSION = 4;
+export const RULES_VERSION = 5;
+export const MAX_AI_CARDS = 5; // AI candidate generation: no more card income at this many cards
 export const RULES_CHANGELOG = [
   { v: 1, date: '2026-10-20', text: 'Erste Regelumsetzung' },
   { v: 2, date: '2026-10-21', text: 'Ameise verlässt ihr Feld über jeden Weg, wenn sich der Untergrund ändert (Aufladen/Abladen/Hügel zurück)' },
   { v: 3, date: '2026-10-22', text: 'Hausregel: Ameise mit Ressource bewegt sich nur per Transport; Transport im eigenen Hügel lagert sofort ein' },
   { v: 4, date: '2026-10-23', text: 'KI-Kandidaten ohne Schleifen (kein Zurück auf besuchte Knoten, kein Laden↔Abladen)' },
+  { v: 5, date: '2026-10-24', text: 'KI-Kandidaten: mit leerer Hand nur Dreiecke als Einkommen, höchstens 5 Karten horten (verhindert Stillstand ohne Ausbau)' },
 ];
 export const MAX_ACTIONS = 70;
 export const MAX_ROUNDS = 90;
@@ -407,9 +409,11 @@ export function legalActions(s, full = false) {
   const u = s.used;
 
   if (!u.income) {
+    // AI only: with an empty hand nothing can be built, so income must be tiles (otherwise the AI hoards cards and the board stagnates)
+    const mustTiles = !full && p.hand.length === 0 && s.tileStack.length > 0;
     if (s.tileStack.length) acts.push({ t: 'inc_tiles' });
-    if (s.cardStack.length) acts.push({ t: 'inc_card' });
-    for (const h of hillCells(s, pi)) acts.push({ t: 'inc_hill', cell: h });
+    if (s.cardStack.length && !mustTiles && (full || p.cards.length < MAX_AI_CARDS)) acts.push({ t: 'inc_card' });
+    if (!mustTiles) for (const h of hillCells(s, pi)) acts.push({ t: 'inc_hill', cell: h });
   }
   if (!u.swap && p.hand.length) {
     for (let q = 0; q < s.n; q++) {

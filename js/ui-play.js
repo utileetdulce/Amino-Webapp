@@ -443,9 +443,11 @@ export class PlayUI {
     if (this.selTile == null && hand.length && (this.mode === 'place' || this.mode === 'overlay')) this.selTile = hand[0];
     this.hideCtx();
     this.renderSide();
-    this.board.insetTop = this.isMobile() ? 100 : 0;
     this.boardWrap.style.setProperty('--sideh', (this.isMobile() ? this.side.offsetHeight : 0) + 'px');
     this.renderHud();
+    const hudH = this.isMobile() ? this.hud.offsetHeight : 0;
+    this.boardWrap.style.setProperty('--hudh', hudH + 'px');
+    this.board.insetTop = this.isMobile() ? hudH + 60 : 0; // keep the board clear of the player list and the banner
     this.renderModal();
     this.updateBoardMode();
     this.board.focusSeat = me;

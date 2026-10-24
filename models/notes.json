@@ -13,5 +13,35 @@
   "status": "weak",
   "note": "Champion des langen M4-Laufs (Iter. 1860): 53 % gegen die Heuristik, 40 % gegen „AZ kurz“ und 37 % gegen das PPO-Modell (je 200 Partien). Gating mit nur 60 Partien beförderte durch Zufall – nicht empfohlen.",
   "name": "AZ lang M4 (Champion, Iter. 1860)"
+ },
+ "az-s200.json": {
+  "status": "weak",
+  "name": "AZ s200 (Negativ-Ergebnis)",
+  "note": "30 Minuten ab „AZ kurz“ mit 200 Simulationen und 100 Spielen je Iteration (31.500 Spiele): nie befördert (bestes Gating 51 %), zehnmal zurückgesetzt. Mehr Simulationen allein helfen nicht – Ursache war der Value-Sprung an der Zuggrenze (siehe README)."
+ },
+ "az-s200.best.json": {
+  "status": "weak",
+  "name": "AZ s200 (bester Zwischenstand)",
+  "note": "Bester Zwischenstand des s200-Laufs nach 16 Testpartien (verrauscht); nicht besser als „AZ kurz“."
+ },
+ "az-vfix.json": {
+  "status": "weak",
+  "name": "AZ kurz + Value pro Spieler gewichtet (Versuch)",
+  "note": "Nur der Value-Kopf von „AZ kurz“ nachtrainiert mit --vbalance (5 Minuten, Policy unverändert). Der Sprung an der Zuggrenze kippte nur ins Negative (−0,15), Value schlechter (Korrelation 0,40). Nicht empfohlen."
+ },
+ "az-vtd.json": {
+  "status": "",
+  "name": "AZ kurz + zugkonsistenter Value",
+  "note": "Policy identisch mit „AZ kurz“, Value-Kopf 5 Minuten mit zugkonsistenten Zielen (--vtd) nachtrainiert: Sprung nach „Ende“ +0,38 → +0,03. Mit Suche 60 % im Direktvergleich gegen „AZ kurz“ (600 Partien), 83 % gegen die Heuristik. Netz allein unverändert."
+ },
+ "az-v2.json": {
+  "status": "",
+  "name": "AZ v2 (zugkonsistenter Value, 30 Min.)",
+  "note": "30 Minuten Training ab „AZ kurz + zugkonsistenter Value“ (128 Simulationen, 36.000 Spiele, Gating mit Suche): stabil, aber keine weitere Verbesserung – mit Suche 51 % gegen den Startpunkt, 60 % gegen „AZ kurz“; Netz allein 47 % gegen „AZ kurz“."
+ },
+ "az-v2.best.json": {
+  "status": "",
+  "name": "AZ v2 (bester Zwischenstand)",
+  "note": "Bester Zwischenstand des v2-Laufs nach 16 Testpartien (verrauscht)."
  }
 }

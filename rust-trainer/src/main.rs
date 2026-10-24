@@ -352,7 +352,7 @@ fn main() {
         "id": format!("m-{:x}-{:04x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seed & 0xffff),
         "name": arg("name").unwrap_or(stem), "kind": "az", "trainer": "rust", "createdAt": now0, "updatedAt": now0, "rulesVersion": RULES_VERSION,
         "parent": parent_info,
-        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "typeDiv": argf("type-div", 0.0) != 0.0, "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
+        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "typeDiv": argf("type-div", 0.0) != 0.0, "drawZ": argf("draw-z", 0.0), "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
                   "minBuffer": min_buffer, "batch": batch, "oppMix": opp_mix, "depth": depth, "tauMoves": tau_moves},
         "host": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "cpus": ncpu, "workers": workers},
         "git": git_commit(), "trainMinutes": base_minutes, "note": ""
@@ -360,7 +360,7 @@ fn main() {
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
     let mut champion = net.clone(); let mut champ_iter = iter0;
-    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0), vbalance: argf("vbalance", 0.0) != 0.0, vtd: argf("vtd", 1.0) };
+    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0), vbalance: argf("vbalance", 0.0) != 0.0, vtd: argf("vtd", 1.0), draw_z: argf("draw-z", 0.0) as f32 };
     for _ in 0..iters {
         if minutes > 0.0 && t0.elapsed().as_secs_f64() / 60.0 > minutes { break; }
         let t1 = Instant::now();

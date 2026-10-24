@@ -15,7 +15,7 @@ pub struct Sample { pub s: [f32; SF], pub a: Vec<f32>, pub n: usize, pub tgt: Ve
 pub struct GameOut { pub samples: Vec<Sample>, pub winner: i32, pub turns: i32, pub learner: i32 }
 
 #[derive(Clone, Copy)]
-pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32, pub qbeta: f64, pub ttemp: f64, pub vbalance: bool, pub vtd: f64 }
+pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32, pub qbeta: f64, pub ttemp: f64, pub vbalance: bool, pub vtd: f64, pub draw_z: f32 }
 
 pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng) -> GameOut {
     let num_players = 2;
@@ -75,7 +75,8 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
     let mut cnt = [0usize; 6];
     for (pi, ..) in &samples { cnt[*pi] += 1; }
     let out = samples.into_iter().map(|(pi, mut x, anchor, boot)| {
-        let z = if s.winner < 0 { 0.0 } else if s.winner as usize == pi { 1.0 } else { -1.0 };
+        // draws (mostly the 90-round cap) count as `draw_z` for both sides; < 0 punishes the passive self-play equilibrium
+        let z = if s.winner < 0 { cfg.draw_z } else if s.winner as usize == pi { 1.0 } else { -1.0 };
         x.z = match boot { Some(b) if !anchor => (cfg.vtd as f32) * b + (1.0 - cfg.vtd as f32) * z, _ => z };
         if cfg.vbalance { x.vw = 1.0 / cnt[pi] as f32; }
         x

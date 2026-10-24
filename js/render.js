@@ -296,46 +296,67 @@ export class BoardView {
       ctx.strokeStyle = m.color || 'rgba(255,230,80,.9)'; ctx.lineWidth = Math.max(3, sc * 0.09); ctx.setLineDash([6, 5]);
       ctx.beginPath(); ctx.moveTo(tx(ca[0]), ty(ca[1])); ctx.lineTo(tx(cb[0]), ty(cb[1])); ctx.stroke(); ctx.setLineDash([]);
     }
-    // pieces
-    ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = Math.max(2, sc * 0.06); ctx.shadowOffsetY = Math.max(1, sc * 0.025);
+    // pieces: smaller and slightly transparent, with the path network re-drawn faintly on top, so the ways stay readable at a glance
+    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
+    const occupied = [];
     for (const k in s.cells) {
       const c = s.cells[k];
       const [cx, cy] = cellCenter(c.x, c.y);
       const X = tx(cx), Y = ty(cy);
-      const r = sc * 0.2;
+      const r = sc * 0.145;
+      ctx.globalAlpha = 0.86;
       if (c.hill >= 0) {
+        const hr = r * 1.3, hy = Y + r * 0.45;
         ctx.fillStyle = PLAYER_COLORS[c.hill];
-        ctx.beginPath(); ctx.arc(X, Y + r * 0.35, r * 1.25, Math.PI, 0); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(X, hy, hr, Math.PI, 0); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.2; ctx.stroke();
-        ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.ellipse(X, Y + r * 0.35, r * 0.4, r * 0.28, 0, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.ellipse(X, hy, hr * 0.32, hr * 0.22, 0, Math.PI, 0); ctx.fill();
       }
       if (c.res >= 0) {
         const res = s.resources[c.res];
-        drawResource(ctx, X + (c.hill >= 0 ? r * 1.0 : 0), Y - (c.hill >= 0 ? r * 0.2 : 0), r, res.kind);
+        drawResource(ctx, X + (c.hill >= 0 ? r * 1.35 : 0), Y - (c.hill >= 0 ? r * 0.75 : 0), r, res.kind);
       }
       if (c.block >= 0) {
         ctx.fillStyle = PLAYER_COLORS[c.block]; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
-        const q = r * 1.7;
+        const q = r * 1.6;
         ctx.fillRect(X - q / 2, Y - q / 2, q, q); ctx.strokeRect(X - q / 2, Y - q / 2, q, q);
         ctx.beginPath(); ctx.moveTo(X - q / 2, Y - q / 2); ctx.lineTo(X + q / 2, Y + q / 2); ctx.moveTo(X + q / 2, Y - q / 2); ctx.lineTo(X - q / 2, Y + q / 2); ctx.stroke();
       }
+      ctx.globalAlpha = 1;
+      if (c.hill >= 0 || c.res >= 0 || c.block >= 0) occupied.push(c);
     }
-    // ants
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    for (const c of occupied) { ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0 || c.res >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
+    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
+    // ants: placed on the path group (component) they actually stand in
     const byCell = {};
     for (const p of s.players) if (p.ant) (byCell[p.ant.cell] = byCell[p.ant.cell] || []).push(p);
     for (const k in byCell) {
       const list = byCell[k];
       const c = s.cells[k];
+      const junction = c.hill >= 0 || c.res >= 0;
+      const comps = junction ? [c.allOpen] : c.comps;
       const [cx, cy] = cellCenter(c.x, c.y);
       list.forEach((p, i) => {
-        const off = (i - (list.length - 1) / 2) * sc * 0.3;
-        const X = tx(cx) + off, Y = ty(cy) + sc * 0.1;
-        const r = sc * 0.17;
+        let ax = cx, ay = cy;
+        const comp = comps.find((g) => g.includes(p.ant.edge)) || comps[0];
+        if (comp && !junction) {
+          const mids = comp.map((e) => edgeMid(c.x, c.y, e));
+          const mx = mids.reduce((q, m) => q + m[0], 0) / mids.length, my = mids.reduce((q, m) => q + m[1], 0) / mids.length;
+          const f = comp.length === 1 ? 0.5 : 0.35; // stub: on the stub, curve: near its middle
+          ax = mx + (cx - mx) * f; ay = my + (cy - my) * f;
+        }
+        const crowd = junction ? [-0.17, 0.12] : [0, 0];
+        const off = (i - (list.length - 1) / 2) * sc * 0.22;
+        const X = tx(ax) + crowd[0] * sc + off, Y = ty(ay) + crowd[1] * sc;
+        const r = sc * 0.125;
+        ctx.globalAlpha = 0.92;
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(X, Y, r * 1.15, 0, 7); ctx.fill();
-        ctx.lineWidth = Math.max(2, sc * 0.05); ctx.strokeStyle = p.color; ctx.stroke();
+        ctx.lineWidth = Math.max(2, sc * 0.045); ctx.strokeStyle = p.color; ctx.stroke();
         ctx.font = `${Math.round(r * 1.7)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
         ctx.fillText('🐜', X, Y + 1);
-        if (p.carry >= 0) { drawResource(ctx, X + r * 1.1, Y - r * 1.1, r * 0.8, s.resources[p.carry].kind); ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(2, sc * 0.04); ctx.beginPath(); ctx.arc(X + r * 1.1, Y - r * 1.1, r * 0.95, 0, 7); ctx.stroke(); }
+        if (p.carry >= 0) { drawResource(ctx, X + r * 1.15, Y - r * 1.15, r * 0.78, s.resources[p.carry].kind); ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(2, sc * 0.035); ctx.beginPath(); ctx.arc(X + r * 1.15, Y - r * 1.15, r * 0.9, 0, 7); ctx.stroke(); }
+        ctx.globalAlpha = 1;
       });
     }
     ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;

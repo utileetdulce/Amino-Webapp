@@ -138,9 +138,145 @@ fn xcheck(path: &str, n: i32) {
     }
 }
 
+/// Agent spec for `bench`: heur | raw:<model>:<temp, 0=greedy> | mcts:<model>:<sims>[:topk=12][:cpuct=1.25][:depth=18][:v0][:nodet]
+fn parse_agent<'a>(spec: &str, nets: &'a std::collections::HashMap<String, Net>) -> Agent<'a> {
+    let p: Vec<&str> = spec.split(':').collect();
+    match p[0] {
+        "heur" => Agent::Heur(4.0),
+        "raw" => Agent::Nn(&nets[p[1]], p.get(2).map_or(0.5, |t| t.parse().unwrap())),
+        "mcts" => {
+            let mut m = mcts::Mcts::new(&nets[p[1]], p[2].parse().unwrap(), 18, 0.0);
+            for kv in &p[3..] {
+                let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                match k {
+                    "topk" => m.topk = v.parse().unwrap(), "cpuct" => m.cpuct = v.parse().unwrap(), "depth" => m.max_depth = v.parse().unwrap(),
+                    "v0" => m.value_zero = true, "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
+                }
+            }
+            Agent::Search(m)
+        }
+        _ => panic!("unknown agent {}", spec),
+    }
+}
+
+/// `bench <games> <agentA> <agentB>`: A vs B with alternating seats; prints A's score with a 95% interval
+fn bench(games: usize, sa: &str, sb: &str) {
+    let mut nets = std::collections::HashMap::new();
+    for spec in [sa, sb] { let p: Vec<&str> = spec.split(':').collect(); if p.len() > 1 && !nets.contains_key(p[1]) { nets.insert(p[1].to_string(), load_net(p[1]).0); } }
+    let t0 = Instant::now();
+    let base = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
+    let res: Vec<(i32, i32)> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(base ^ (g as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15));
+        let seat = g % 2;
+        let (a, b) = (parse_agent(sa, &nets), parse_agent(sb, &nets));
+        let ag = if seat == 0 { [a, b] } else { [b, a] };
+        let (w, turns) = play_game_turns(&ag, &mut rng);
+        (if w < 0 { 0 } else if w as usize == seat { 1 } else { -1 }, turns)
+    }).collect();
+    let (w, d, l) = (res.iter().filter(|r| r.0 == 1).count(), res.iter().filter(|r| r.0 == 0).count(), res.iter().filter(|r| r.0 == -1).count());
+    let rate = (w as f64 + 0.5 * d as f64) / games as f64;
+    let se = (rate * (1.0 - rate) / games as f64).sqrt();
+    println!("{:<44} vs {:<34} {:>5.1}% ±{:.1}  ({}-{}-{})  turns {:.0}  {:.0}s", sa, sb, rate * 100.0, 196.0 * se, w, d, l,
+        res.iter().map(|r| r.1 as f64).sum::<f64>() / games as f64, t0.elapsed().as_secs_f64());
+}
+
+const ANAMES: [&str; 24] = ["inc_tiles", "inc_card", "inc_hill", "swap", "place", "move", "load", "unload", "fight", "transport", "tmove", "tstay",
+    "bridge", "blockage", "wings", "super", "overlay", "sdone", "sundo", "hide", "guess", "revenge", "decline", "end"];
+
+/// `trace <agentA> <games>`: A (seat 0/1 alternating) vs heuristic; action-type histogram of A, decisions per turn, end scores
+fn trace(sa: &str, games: usize) {
+    let mut nets = std::collections::HashMap::new();
+    let p: Vec<&str> = sa.split(':').collect(); if p.len() > 1 { nets.insert(p[1].to_string(), load_net(p[1]).0); }
+    let mut hist = [0usize; 24]; let mut turns_a = 0usize; let mut dec_a = 0usize; let (mut sc_a, mut sc_h) = (0i32, 0i32);
+    let mut rng = Rng::new(42);
+    for g in 0..games {
+        let seat = g % 2;
+        let a = parse_agent(sa, &nets);
+        let ag = if seat == 0 { [a, Agent::Heur(4.0)] } else { [Agent::Heur(4.0), a] };
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        let mut guard = 0;
+        while !s.over && guard < 6000 {
+            guard += 1;
+            let pi = s.actor();
+            let la = s.legal_actions();
+            let act = ag[pi].act(&s, &mut rng);
+            if pi == seat && la.len() > 1 { hist[act.t as usize] += 1; dec_a += 1; if act.t == engine::A_END { turns_a += 1; } }
+            s.apply(act);
+        }
+        sc_a += s.score(seat); sc_h += s.score(1 - seat);
+    }
+    let tot: usize = hist.iter().sum();
+    let mut v: Vec<(usize, usize)> = hist.iter().copied().enumerate().filter(|x| x.1 > 0).collect(); v.sort_by(|a, b| b.1.cmp(&a.1));
+    println!("{}: decisions/turn {:.1}  avg end score A {:.2} vs heur {:.2}", sa, dec_a as f64 / turns_a.max(1) as f64, sc_a as f64 / games as f64, sc_h as f64 / games as f64);
+    println!("  {}", v.iter().map(|(i, c)| format!("{} {:.1}%", ANAMES[*i], 100.0 * *c as f64 / tot as f64)).collect::<Vec<_>>().join("  "));
+}
+
+/// `diag <model> <sims> <games> [qbeta]`: self-play like training; reports value-head calibration and how the Q-targets shift the policy
+fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
+    let (net, _) = load_net(path);
+    #[derive(Default, Clone)] struct D { n: f64, v: f64, z: f64, vz: f64, v2: f64, z2: f64, se: f64, se0: f64,
+        pe: f64, te: f64, qe: f64, ne: f64, qo: f64, no: f64, kl: f64, start: f64, sv: f64, mv: f64, sn: f64, mn: f64, sr: f64, tdn: f64, tdnn: f64, tde: f64, tden: f64 }
+    let rs: Vec<D> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(1234 + g as u64 * 7919);
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        let m = mcts::Mcts::new(&net, sims, 18, 0.25);
+        let mut rec: Vec<(usize, f64, bool, f64, f64, f64, Option<f64>, Option<f64>, f64)> = Vec::new();
+        let mut prev: Option<(usize, f64, bool)> = None; // (actor, v, was 'end')
+        let mut td = [0f64; 4]; // sum dv after non-end, n, sum dv after end, n
+        let mut guard = 0; let mut searched = 0;
+        while !s.over && guard < 3000 {
+            guard += 1;
+            let pi = s.actor();
+            let la = s.legal_actions();
+            if la.len() == 1 { s.apply(la[0]); continue; }
+            let ctx = build_ctx(&s, pi); let mut sf = [0f32; SF]; state_features(&s, &ctx, &mut sf);
+            let v = net.forward_value(&sf, false).0 as f64;
+            if let Some((pa, pv, was_end)) = prev { let vv = if pa == pi { v } else { -v }; if was_end { td[2] += vv - pv; td[3] += 1.0; } else { td[0] += vv - pv; td[1] += 1.0; } }
+            let r = m.search(&s, sims, true, &mut rng);
+            let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + qbeta * (q as f64 - r.value)).collect();
+            let mx = l.iter().cloned().fold(f64::NEG_INFINITY, f64::max); let mut z = 0.0; for x in l.iter_mut() { *x = (*x - mx).exp(); z += *x; }
+            for x in l.iter_mut() { *x /= z; }
+            let kl: f64 = l.iter().zip(r.prior.iter()).map(|(t, &p)| if *t > 1e-9 { t * (t / (p as f64).max(1e-9)).ln() } else { 0.0 }).sum();
+            let ei = r.acts.iter().position(|a| a.t == engine::A_END);
+            let (pe, te, qe) = match ei { Some(i) => (r.prior[i] as f64, l[i], if r.visits[i] > 0 { Some(r.q[i] as f64 - r.value) } else { None }), None => (0.0, 0.0, None) };
+            let bo = (0..r.acts.len()).filter(|&i| Some(i) != ei && r.visits[i] > 0).map(|i| r.q[i] as f64 - r.value).fold(None, |m: Option<f64>, x| Some(m.map_or(x, |y| y.max(x))));
+            rec.push((pi, v, s.actions_this_turn == 0 && s.pending.is_none(), pe, te, kl, qe, bo, r.value));
+            let tau = if searched < 30 { 1.0 } else { 0.1 }; searched += 1;
+            let idx = mcts::pick_by_visits(&r.visits, tau, &mut rng);
+            prev = Some((pi, v, r.acts[idx].t == engine::A_END));
+            s.apply(r.acts[idx]);
+        }
+        let mut d = D::default();
+        d.tdn = td[0]; d.tdnn = td[1]; d.tde = td[2]; d.tden = td[3];
+        for (pi, v, st, pe, te, kl, qe, bo, rv) in rec {
+            let z = if !s.over || s.winner < 0 { 0.0 } else if s.winner as usize == pi { 1.0 } else { -1.0 };
+            d.n += 1.0; d.v += v; d.z += z; d.vz += v * z; d.v2 += v * v; d.z2 += z * z; d.se += (v - z) * (v - z); d.se0 += z * z; d.sr += (rv - z) * (rv - z);
+            d.pe += pe; d.te += te; d.kl += kl;
+            if let Some(q) = qe { d.qe += q; d.ne += 1.0; }
+            if let Some(q) = bo { d.qo += q; d.no += 1.0; }
+            if st { d.start += 1.0; d.sv += v; d.sn += 1.0; } else { d.mv += v; d.mn += 1.0; }
+        }
+        d
+    }).collect();
+    let mut t = D::default();
+    for d in rs { t.n += d.n; t.v += d.v; t.z += d.z; t.vz += d.vz; t.v2 += d.v2; t.z2 += d.z2; t.se += d.se; t.se0 += d.se0; t.sr += d.sr; t.pe += d.pe; t.te += d.te; t.kl += d.kl;
+        t.qe += d.qe; t.ne += d.ne; t.qo += d.qo; t.no += d.no; t.sv += d.sv; t.sn += d.sn; t.mv += d.mv; t.mn += d.mn; t.tdn += d.tdn; t.tdnn += d.tdnn; t.tde += d.tde; t.tden += d.tden; }
+    let n = t.n;
+    let corr = (t.vz / n - t.v / n * t.z / n) / ((t.v2 / n - (t.v / n).powi(2)).sqrt() * (t.z2 / n - (t.z / n).powi(2)).sqrt());
+    println!("{} sims {} qbeta {}: {} decisions", path, sims, qbeta, n);
+    println!("  value: mean v {:+.3} (turn start {:+.3}, mid-turn {:+.3})  mean z {:+.3}  MSE net {:.3}  MSE search-root {:.3}  MSE(0) {:.3}  corr {:.3}",
+        t.v / n, t.sv / t.sn.max(1.0), t.mv / t.mn.max(1.0), t.z / n, t.se / n, t.sr / n, t.se0 / n, corr);
+    println!("  'end': prior {:.3} -> target {:.3}   Q(end)-V {:+.3} (n {})   best other Q-V {:+.3} (n {})   KL(target||prior) {:.3}",
+        t.pe / n, t.te / n, t.qe / t.ne.max(1.0), t.ne, t.qo / t.no.max(1.0), t.no, t.kl / n);
+    println!("  value drift per step (should be ~0): after a non-end action {:+.4} (n {})   after 'end' {:+.4} (n {})", t.tdn / t.tdnn.max(1.0), t.tdnn, t.tde / t.tden.max(1.0), t.tden);
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|s| s.as_str()) == Some("xcheck") { xcheck(&argv[2], argv[3].parse().unwrap()); return; }
+    if argv.get(1).map(|s| s.as_str()) == Some("diag") { diag(&argv[2], argv[3].parse().unwrap(), argv[4].parse().unwrap(), argv.get(5).map_or(3.0, |x| x.parse().unwrap())); return; }
+    if argv.get(1).map(|s| s.as_str()) == Some("trace") { trace(&argv[2], argv[3].parse().unwrap()); return; }
+    if argv.get(1).map(|s| s.as_str()) == Some("bench") { bench(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
 
     let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let workers = argf("workers", ncpu as f64) as usize;
@@ -150,6 +286,7 @@ fn main() {
     let pcoef = argf("pcoef", 1.0) as f32; let vcoef = argf("vcoef", 1.0) as f32; // loss weights (0 freezes that head)
     let gate_every = argf("gate-every", 20.0) as u64; // champion gating: every N iterations play current vs champion (0 = off)
     let gate_games = argf("gate-games", 200.0) as usize;
+    let gate_sims = argf("gate-sims", 64.0) as usize; // gating plays with search (so value-head gains count); 0 = raw policy
     let gate_win = argf("gate-win", 0.56); // promote the current net to champion at >= this score
     let gate_revert = argf("gate-revert", 0.42); // go back to the champion if the score is below this (stops drift); 0 = never
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
@@ -202,7 +339,7 @@ fn main() {
         "id": format!("m-{:x}-{:04x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seed & 0xffff),
         "name": arg("name").unwrap_or(stem), "kind": "az", "trainer": "rust", "createdAt": now0, "updatedAt": now0, "rulesVersion": RULES_VERSION,
         "parent": parent_info,
-        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "games": games, "lr": lr, "ratio": ratio,
+        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
                   "minBuffer": min_buffer, "batch": batch, "oppMix": opp_mix, "depth": depth, "tauMoves": tau_moves},
         "host": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "cpus": ncpu, "workers": workers},
         "git": git_commit(), "trainMinutes": base_minutes, "note": ""
@@ -210,7 +347,7 @@ fn main() {
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
     let mut champion = net.clone(); let mut champ_iter = iter0;
-    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0) };
+    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0), vbalance: argf("vbalance", 0.0) != 0.0, vtd: argf("vtd", 1.0) };
     for _ in 0..iters {
         if minutes > 0.0 && t0.elapsed().as_secs_f64() / 60.0 > minutes { break; }
         let t1 = Instant::now();
@@ -251,7 +388,7 @@ fn main() {
             save(&out, &net, sims, games_total, iter0, &history, &meta_now(&meta0, base_minutes, t0.elapsed().as_secs_f64() / 60.0));
         }
         if gate_every > 0 && iter0 % gate_every == 0 {
-            let g = eval_h2h(&net, &champion, gate_games, false, sims, depth, rng.u64());
+            let g = eval_h2h(&net, &champion, gate_games, gate_sims > 0, gate_sims, depth, rng.u64());
             let rate = g.rate();
             let mut verdict = "kept".to_string();
             if rate >= gate_win {

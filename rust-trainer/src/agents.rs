@@ -128,6 +128,19 @@ impl<'a> Agent<'a> {
     }
 }
 
+/// returns (winner, turns)
+pub fn play_game_turns(agents: &[Agent], rng: &mut Rng) -> (i32, i32) {
+    let mut s = new_game(agents.len(), (rng.u64() >> 33) as i32);
+    let mut guard = 0;
+    while !s.over && guard < 6000 {
+        guard += 1;
+        let pi = s.actor();
+        let a = agents[pi].act(&s, rng);
+        s.apply(a);
+    }
+    (if !s.over { -1 } else { s.winner as i32 }, s.turn_no)
+}
+
 /// returns winner (-1 = draw)
 pub fn play_game(agents: &[Agent], rng: &mut Rng) -> i32 {
     let mut s = new_game(agents.len(), (rng.u64() >> 33) as i32);

@@ -20,6 +20,8 @@ pub struct SearchResult { pub acts: Vec<Act>, pub visits: Vec<u32>, pub value: f
 pub struct Mcts<'a> {
     pub net: &'a Net, pub sims: usize, pub cpuct: f64, pub max_depth: i32, pub max_cands: usize,
     pub dirichlet: f64, pub dir_alpha: f64, pub fpu: f64,
+    /// diagnostics (bench): candidates kept per node, leaf value off (0 = pure prior search), determinization off (sees hidden info)
+    pub topk: usize, pub value_zero: bool, pub determinize: bool,
 }
 
 pub fn determinize(s: &mut State, observer: usize, rng: &mut Rng) {
@@ -73,14 +75,15 @@ fn gamma_sample(k: f64, rng: &mut Rng) -> f64 {
 
 impl<'a> Mcts<'a> {
     pub fn new(net: &'a Net, sims: usize, max_depth: i32, dirichlet: f64) -> Mcts<'a> {
-        Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0 }
+        Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0,
+            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true }
     }
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
         let ctx = build_ctx(s, s.actor());
         let mut sf = [0f32; SF];
         state_features(s, &ctx, &mut sf);
-        let (v, _) = self.net.forward_value(&sf, false);
+        let v = if self.value_zero { 0.0 } else { self.net.forward_value(&sf, false).0 };
         let priors = if want_priors {
             let a = candidate_matrix(s, &ctx, acts);
             softmax(&self.net.forward_policy(&sf, &a, acts.len(), false).logits, 1.0)
@@ -107,7 +110,7 @@ impl<'a> Mcts<'a> {
         let mut root_prior: Vec<f32> = Vec::new();
         for i in 0..sims {
             let mut s = *s0;
-            determinize(&mut s, observer, rng);
+            if self.determinize { determinize(&mut s, observer, rng); } else { s.seed = (rng.u64() >> 33) as i32; }
             self.simulate(&mut nodes, &mut root_acts, &mut root_prior, &mut s, observer, noise && i == 0, rng);
         }
         let root = &nodes[0];
@@ -133,7 +136,7 @@ impl<'a> Mcts<'a> {
             if !nodes[node].expanded {
                 let (v, pr) = self.evaluate(s, &acts, true);
                 // keep the top-k candidates by prior (plus "end turn" so a turn can always be finished)
-                let k = TOPK.load(Ordering::Relaxed).max(2);
+                let k = self.topk.max(2);
                 let mut order: Vec<usize> = (0..acts.len()).collect();
                 order.sort_by(|&a, &b| pr[b].partial_cmp(&pr[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
                 let mut keep: Vec<usize> = order.iter().copied().take(k).collect();

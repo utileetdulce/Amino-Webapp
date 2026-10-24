@@ -150,7 +150,7 @@ fn parse_agent<'a>(spec: &str, nets: &'a std::collections::HashMap<String, Net>)
                 let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
                 match k {
                     "topk" => m.topk = v.parse().unwrap(), "cpuct" => m.cpuct = v.parse().unwrap(), "depth" => m.max_depth = v.parse().unwrap(),
-                    "v0" => m.value_zero = true, "div" => m.type_div = v != "0", "cleaf" => m.chance_leaf = v != "0", "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
+                    "v0" => m.value_zero = true, "div" => m.type_div = v != "0", "cleaf" => m.chance_leaf = v != "0", "nodet" => m.determinize = false, "roll" => m.roll_turns = v.parse().unwrap(), "rw" => m.roll_w = v.parse().unwrap(), _ => panic!("unknown mcts option {}", k),
                 }
             }
             Agent::Search(m)
@@ -305,6 +305,8 @@ fn main() {
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
+    mcts::ROLL_TURNS.store(argf("roll", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
+    mcts::ROLL_W_MILLI.store((argf("roll-w", 0.5) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::CHANCELEAF.store(argf("chance-leaf", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::TYPEDIV.store(argf("type-div", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::CPUCT_MILLI.store((argf("cpuct", 1.25) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);

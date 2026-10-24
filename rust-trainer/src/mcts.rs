@@ -16,6 +16,9 @@ pub static TYPEDIV: AtomicUsize = AtomicUsize::new(0);
 /// 1 = stop a simulation right after a chance action (dice, tile/card/resource draw) and use the value net there:
 /// the open-loop tree otherwise mixes follow-up statistics of different outcomes, which undervalues chance actions.
 pub static CHANCELEAF: AtomicUsize = AtomicUsize::new(0);
+/// Leaf evaluation by short heuristic rollout (`--roll N` turns, 0 = off) blended with the value net (`--roll-w`).
+pub static ROLL_TURNS: AtomicUsize = AtomicUsize::new(0);
+pub static ROLL_W_MILLI: AtomicUsize = AtomicUsize::new(500);
 #[inline] fn is_chance(a: &Act) -> bool { a.t == A_TRANSPORT || a.t == A_INC_TILES || a.t == A_INC_CARD || (a.t == A_PLACE && a.c == 2) }
 
 struct Child { act: Act, n: u32, w: f64, p: f32, node: u32 }
@@ -28,7 +31,7 @@ pub struct Mcts<'a> {
     pub net: &'a Net, pub sims: usize, pub cpuct: f64, pub max_depth: i32, pub max_cands: usize,
     pub dirichlet: f64, pub dir_alpha: f64, pub fpu: f64,
     /// diagnostics (bench): candidates kept per node, leaf value off (0 = pure prior search), determinization off (sees hidden info)
-    pub topk: usize, pub value_zero: bool, pub determinize: bool, pub type_div: bool, pub chance_leaf: bool,
+    pub roll_turns: usize, pub roll_w: f64, pub topk: usize, pub value_zero: bool, pub determinize: bool, pub type_div: bool, pub chance_leaf: bool,
 }
 
 pub fn determinize(s: &mut State, observer: usize, rng: &mut Rng) {
@@ -83,7 +86,7 @@ fn gamma_sample(k: f64, rng: &mut Rng) -> f64 {
 impl<'a> Mcts<'a> {
     pub fn new(net: &'a Net, sims: usize, max_depth: i32, dirichlet: f64) -> Mcts<'a> {
         Mcts { net, sims, cpuct: CPUCT_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, max_depth, max_cands: 40, dirichlet, dir_alpha: 0.3, fpu: 0.0,
-            topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0, chance_leaf: CHANCELEAF.load(Ordering::Relaxed) != 0 }
+            roll_turns: ROLL_TURNS.load(Ordering::Relaxed), roll_w: ROLL_W_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0, chance_leaf: CHANCELEAF.load(Ordering::Relaxed) != 0 }
     }
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
@@ -96,6 +99,22 @@ impl<'a> Mcts<'a> {
             softmax(&self.net.forward_policy(&sf, &a, acts.len(), false).logits, 1.0)
         } else { Vec::new() };
         (v, priors)
+    }
+
+    /// value of `s` for its actor: blend of net value `v` and the outcome (or net value) after `roll_turns` turns of noisy heuristic play
+    fn blend(&self, s: &State, v: f32, rng: &mut Rng) -> f32 {
+        if self.roll_turns == 0 { return v; }
+        let me = s.actor();
+        let mut r = *s;
+        let stop = r.turn_no + self.roll_turns as i32;
+        let mut g = 0;
+        while !r.over && r.turn_no < stop && g < 2000 { g += 1; let a = crate::agents::heuristic_act(&r, 4.0, rng); r.apply(a); }
+        let rv = if r.over { if r.winner < 0 { 0.0 } else if r.winner as usize == me { 1.0 } else { -1.0 } }
+            else {
+                let ctx = build_ctx(&r, r.actor()); let mut sf = [0f32; SF]; state_features(&r, &ctx, &mut sf);
+                let x = self.net.forward_value(&sf, false).0; if r.actor() == me { x } else { -x }
+            };
+        ((1.0 - self.roll_w) as f32) * v + (self.roll_w as f32) * rv
     }
 
     fn advance_forced(&self, s: &mut State) -> Vec<Act> {
@@ -136,6 +155,7 @@ impl<'a> Mcts<'a> {
             if s.over { value = if s.winner < 0 { 0.0 } else if s.winner as usize == observer { 1.0 } else { -1.0 }; break; }
             if depth >= self.max_depth {
                 let (v, _) = self.evaluate(s, &acts, false);
+                let v = self.blend(s, v, rng);
                 value = if s.actor() == observer { v as f64 } else { -(v as f64) };
                 break;
             }
@@ -166,6 +186,7 @@ impl<'a> Mcts<'a> {
                 nd.expanded = true;
                 for (j, &i) in keep.iter().enumerate() { nd.children.push(Child { act: acts[i], n: 0, w: 0.0, p: pk[j] as f32, node: NONE }); }
                 if node == 0 { *root_acts = acts.clone(); *root_prior = pr.clone(); }
+                let v = self.blend(s, v, rng);
                 value = if s.actor() == observer { v as f64 } else { -(v as f64) };
                 break;
             }

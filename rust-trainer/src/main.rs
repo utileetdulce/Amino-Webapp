@@ -302,6 +302,7 @@ fn main() {
     let gate_sims = argf("gate-sims", 64.0) as usize; // gating plays with search (so value-head gains count); 0 = raw policy
     let gate_win = argf("gate-win", 0.56); // promote the current net to champion at >= this score
     let gate_revert = argf("gate-revert", 0.42); // go back to the champion if the score is below this (stops drift); 0 = never
+    let sp_champ = argf("sp-champion", 0.0) != 0.0;
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
@@ -370,7 +371,7 @@ fn main() {
         let t1 = Instant::now();
         let base = rng.u64();
         let outs: Vec<(GameOut, bool)> = {
-            let netr = &net;
+            let netr = if sp_champ { &champion } else { &net }; // --sp-champion: data comes from the frozen champion (no feedback loop)
             (0..games).into_par_iter().map(|g| {
                 let mut r = Rng::new(base ^ (g as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15));
                 let heur = r.f64() < opp_mix;

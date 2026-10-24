@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-24T19:58:07.405Z",
+ "updated": "2026-10-24T20:08:45.828Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -14,7 +14,7 @@
    "iter": 100,
    "note": "Kurzlauf (100 Iterationen, 3.200 Spiele) ab dem PPO-Modell mit Q-Zielen und Top-12-Suche. Direktvergleich gegen das PPO-Modell: 66 % (Netz allein, 300 Partien) bzw. 64 % (mit Suche, 80 Partien); ca. 82–92 % gegen die Heuristik.",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": 0.925,
    "rawRate": 0.825,
    "randomRate": null
@@ -122,7 +122,7 @@
    "iter": 186,
    "note": "Policy identisch mit „AZ kurz“, Value-Kopf 5 Minuten mit zugkonsistenten Zielen (--vtd) nachtrainiert: Sprung nach „Ende“ +0,38 → +0,03. Mit Suche 60 % im Direktvergleich gegen „AZ kurz“ (600 Partien), 83 % gegen die Heuristik. Netz allein unverändert.",
    "status": "",
-   "default": false,
+   "default": true,
    "heuristicRate": null,
    "rawRate": null,
    "randomRate": null

@@ -43,5 +43,30 @@
   "status": "",
   "name": "AZ v2 (bester Zwischenstand)",
   "note": "Bester Zwischenstand des v2-Laufs nach 16 Testpartien (verrauscht)."
+ },
+ "az-q10.json": {
+  "status": "weak",
+  "name": "AZ q10 (Negativ-Ergebnis)",
+  "note": "10 Minuten ab „AZ kurz + zugkonsistenter Value“ mit --qbeta 10: passives Spiel (79 % bewegen, kaum Plättchen), Partien 146 Züge. Mit Suche 38 % gegen den Startpunkt."
+ },
+ "az-q30.json": {
+  "status": "weak",
+  "name": "AZ q30 (Negativ-Ergebnis)",
+  "note": "10 Minuten mit --qbeta 30: mit Suche 34 % gegen den Startpunkt, Partien 148 Züge."
+ },
+ "az-visits.json": {
+  "status": "weak",
+  "name": "AZ Besuchszahlen (Negativ-Ergebnis)",
+  "note": "10 Minuten mit geschärften Besuchszahlen als Ziel: Policy spielt zu 93 % „Ende“, mit Suche 33 % gegen den Startpunkt."
+ },
+ "az-q10-d05.json": {
+  "status": "weak",
+  "name": "AZ q10 + Remis −0,5 (Negativ-Ergebnis)",
+  "note": "10 Minuten mit --qbeta 10 --draw-z -0.5: Kollaps trotzdem (143 Züge/Partie), mit Suche 40 % gegen den Startpunkt."
+ },
+ "az-q3-d05.json": {
+  "status": "",
+  "name": "AZ q3 + Remis −0,5",
+  "note": "10 Minuten ab „AZ kurz + zugkonsistenter Value“ mit --qbeta 3 --draw-z -0.5: stabil; Netz allein 57 % gegen den Startpunkt (600 Partien), mit Suche 48 %."
  }
 }

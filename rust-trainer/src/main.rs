@@ -150,7 +150,7 @@ fn parse_agent<'a>(spec: &str, nets: &'a std::collections::HashMap<String, Net>)
                 let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
                 match k {
                     "topk" => m.topk = v.parse().unwrap(), "cpuct" => m.cpuct = v.parse().unwrap(), "depth" => m.max_depth = v.parse().unwrap(),
-                    "v0" => m.value_zero = true, "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
+                    "v0" => m.value_zero = true, "div" => m.type_div = v != "0", "nodet" => m.determinize = false, _ => panic!("unknown mcts option {}", k),
                 }
             }
             Agent::Search(m)
@@ -215,14 +215,16 @@ fn trace(sa: &str, games: usize) {
 fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
     let (net, _) = load_net(path);
     #[derive(Default, Clone)] struct D { n: f64, v: f64, z: f64, vz: f64, v2: f64, z2: f64, se: f64, se0: f64,
-        pe: f64, te: f64, qe: f64, ne: f64, qo: f64, no: f64, kl: f64, start: f64, sv: f64, mv: f64, sn: f64, mn: f64, sr: f64, tdn: f64, tdnn: f64, tde: f64, tden: f64 }
+        pe: f64, te: f64, qe: f64, ne: f64, qo: f64, no: f64, kl: f64, start: f64, sv: f64, mv: f64, sn: f64, mn: f64, sr: f64, tdn: f64, tdnn: f64, tde: f64, tden: f64, shift: [f64; 24], pmass: [f64; 24], qsum: [f64; 24], qn: [f64; 24], dty: [f64; 24], dtn: [f64; 24] }
     let rs: Vec<D> = (0..games).into_par_iter().map(|g| {
         let mut rng = Rng::new(1234 + g as u64 * 7919);
         let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
         let m = mcts::Mcts::new(&net, sims, 18, 0.25);
         let mut rec: Vec<(usize, f64, bool, f64, f64, f64, Option<f64>, Option<f64>, f64)> = Vec::new();
-        let mut prev: Option<(usize, f64, bool)> = None; // (actor, v, was 'end')
+        let mut prev: Option<(usize, f64, bool, usize)> = None; // (actor, v, was 'end', action type)
+        let (mut dty, mut dtn) = ([0f64; 24], [0f64; 24]);
         let mut td = [0f64; 4]; // sum dv after non-end, n, sum dv after end, n
+        let (mut tshift, mut tpm, mut tq, mut tqn) = ([0f64; 24], [0f64; 24], [0f64; 24], [0f64; 24]);
         let mut guard = 0; let mut searched = 0;
         while !s.over && guard < 3000 {
             guard += 1;
@@ -231,23 +233,28 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
             if la.len() == 1 { s.apply(la[0]); continue; }
             let ctx = build_ctx(&s, pi); let mut sf = [0f32; SF]; state_features(&s, &ctx, &mut sf);
             let v = net.forward_value(&sf, false).0 as f64;
-            if let Some((pa, pv, was_end)) = prev { let vv = if pa == pi { v } else { -v }; if was_end { td[2] += vv - pv; td[3] += 1.0; } else { td[0] += vv - pv; td[1] += 1.0; } }
+            if let Some((pa, pv, was_end, pt)) = prev { let vv = if pa == pi { v } else { -v }; dty[pt] += vv - pv; dtn[pt] += 1.0; if was_end { td[2] += vv - pv; td[3] += 1.0; } else { td[0] += vv - pv; td[1] += 1.0; } }
             let r = m.search(&s, sims, true, &mut rng);
             let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + qbeta * (q as f64 - r.value)).collect();
             let mx = l.iter().cloned().fold(f64::NEG_INFINITY, f64::max); let mut z = 0.0; for x in l.iter_mut() { *x = (*x - mx).exp(); z += *x; }
             for x in l.iter_mut() { *x /= z; }
             let kl: f64 = l.iter().zip(r.prior.iter()).map(|(t, &p)| if *t > 1e-9 { t * (t / (p as f64).max(1e-9)).ln() } else { 0.0 }).sum();
+            for (i, a) in r.acts.iter().enumerate() {
+                let t = a.t as usize; tshift[t] += l[i] - r.prior[i] as f64; tpm[t] += r.prior[i] as f64;
+                if r.visits[i] > 0 { tq[t] += r.q[i] as f64 - r.value; tqn[t] += 1.0; }
+            }
             let ei = r.acts.iter().position(|a| a.t == engine::A_END);
             let (pe, te, qe) = match ei { Some(i) => (r.prior[i] as f64, l[i], if r.visits[i] > 0 { Some(r.q[i] as f64 - r.value) } else { None }), None => (0.0, 0.0, None) };
             let bo = (0..r.acts.len()).filter(|&i| Some(i) != ei && r.visits[i] > 0).map(|i| r.q[i] as f64 - r.value).fold(None, |m: Option<f64>, x| Some(m.map_or(x, |y| y.max(x))));
             rec.push((pi, v, s.actions_this_turn == 0 && s.pending.is_none(), pe, te, kl, qe, bo, r.value));
             let tau = if searched < 30 { 1.0 } else { 0.1 }; searched += 1;
             let idx = mcts::pick_by_visits(&r.visits, tau, &mut rng);
-            prev = Some((pi, v, r.acts[idx].t == engine::A_END));
+            prev = Some((pi, v, r.acts[idx].t == engine::A_END, r.acts[idx].t as usize));
             s.apply(r.acts[idx]);
         }
         let mut d = D::default();
         d.tdn = td[0]; d.tdnn = td[1]; d.tde = td[2]; d.tden = td[3];
+        d.shift = tshift; d.pmass = tpm; d.qsum = tq; d.qn = tqn; d.dty = dty; d.dtn = dtn;
         for (pi, v, st, pe, te, kl, qe, bo, rv) in rec {
             let z = if !s.over || s.winner < 0 { 0.0 } else if s.winner as usize == pi { 1.0 } else { -1.0 };
             d.n += 1.0; d.v += v; d.z += z; d.vz += v * z; d.v2 += v * v; d.z2 += z * z; d.se += (v - z) * (v - z); d.se0 += z * z; d.sr += (rv - z) * (rv - z);
@@ -260,7 +267,8 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
     }).collect();
     let mut t = D::default();
     for d in rs { t.n += d.n; t.v += d.v; t.z += d.z; t.vz += d.vz; t.v2 += d.v2; t.z2 += d.z2; t.se += d.se; t.se0 += d.se0; t.sr += d.sr; t.pe += d.pe; t.te += d.te; t.kl += d.kl;
-        t.qe += d.qe; t.ne += d.ne; t.qo += d.qo; t.no += d.no; t.sv += d.sv; t.sn += d.sn; t.mv += d.mv; t.mn += d.mn; t.tdn += d.tdn; t.tdnn += d.tdnn; t.tde += d.tde; t.tden += d.tden; }
+        t.qe += d.qe; t.ne += d.ne; t.qo += d.qo; t.no += d.no; t.sv += d.sv; t.sn += d.sn; t.mv += d.mv; t.mn += d.mn; t.tdn += d.tdn; t.tdnn += d.tdnn; t.tde += d.tde; t.tden += d.tden;
+        for k in 0..24 { t.dty[k] += d.dty[k]; t.dtn[k] += d.dtn[k]; t.shift[k] += d.shift[k]; t.pmass[k] += d.pmass[k]; t.qsum[k] += d.qsum[k]; t.qn[k] += d.qn[k]; } }
     let n = t.n;
     let corr = (t.vz / n - t.v / n * t.z / n) / ((t.v2 / n - (t.v / n).powi(2)).sqrt() * (t.z2 / n - (t.z / n).powi(2)).sqrt());
     println!("{} sims {} qbeta {}: {} decisions", path, sims, qbeta, n);
@@ -268,6 +276,10 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
         t.v / n, t.sv / t.sn.max(1.0), t.mv / t.mn.max(1.0), t.z / n, t.se / n, t.sr / n, t.se0 / n, corr);
     println!("  'end': prior {:.3} -> target {:.3}   Q(end)-V {:+.3} (n {})   best other Q-V {:+.3} (n {})   KL(target||prior) {:.3}",
         t.pe / n, t.te / n, t.qe / t.ne.max(1.0), t.ne, t.qo / t.no.max(1.0), t.no, t.kl / n);
+    let mut ty: Vec<usize> = (0..24).filter(|&k| t.pmass[k] / n > 0.005).collect();
+    ty.sort_by(|a, b| t.pmass[*b].partial_cmp(&t.pmass[*a]).unwrap());
+    println!("  per type: prior mass -> target shift (relative) | mean Q-V of visited | value drift after playing it (should be ~0)");
+    for k in ty { println!("    {:<10} {:.3} {:+.4} ({:+.1}%) | {:+.3} (n {}) | {:+.3} (n {})", ANAMES[k], t.pmass[k] / n, t.shift[k] / n, 100.0 * t.shift[k] / t.pmass[k], t.qsum[k] / t.qn[k].max(1.0), t.qn[k], t.dty[k] / t.dtn[k].max(1.0), t.dtn[k]); }
     println!("  value drift per step (should be ~0): after a non-end action {:+.4} (n {})   after 'end' {:+.4} (n {})", t.tdn / t.tdnn.max(1.0), t.tdnn, t.tde / t.tden.max(1.0), t.tden);
 }
 
@@ -292,6 +304,7 @@ fn main() {
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
+    mcts::TYPEDIV.store(argf("type-div", 0.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::CPUCT_MILLI.store((argf("cpuct", 1.25) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);
     let batch = argf("batch", 128.0) as usize;
     let lr = argf("lr", 5e-5); // long runs at >= 1e-4 drifted and got weaker (see README)
@@ -339,7 +352,7 @@ fn main() {
         "id": format!("m-{:x}-{:04x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seed & 0xffff),
         "name": arg("name").unwrap_or(stem), "kind": "az", "trainer": "rust", "createdAt": now0, "updatedAt": now0, "rulesVersion": RULES_VERSION,
         "parent": parent_info,
-        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
+        "hyper": {"sims": sims, "topk": mcts::TOPK.load(std::sync::atomic::Ordering::Relaxed), "cpuct": argf("cpuct", 1.25), "qbeta": argf("qbeta", 3.0), "vbalance": argf("vbalance", 0.0) != 0.0, "vtd": argf("vtd", 1.0), "typeDiv": argf("type-div", 0.0) != 0.0, "gateSims": gate_sims, "games": games, "lr": lr, "ratio": ratio,
                   "minBuffer": min_buffer, "batch": batch, "oppMix": opp_mix, "depth": depth, "tauMoves": tau_moves},
         "host": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "cpus": ncpu, "workers": workers},
         "git": git_commit(), "trainMinutes": base_minutes, "note": ""

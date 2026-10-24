@@ -35,7 +35,6 @@ impl<T: Copy + Default, const N: usize> FV<T, N> {
     #[inline] pub fn as_mut_slice(&mut self) -> &mut [T] { let n = self.n as usize; &mut self.a[..n] }
     #[inline] pub fn iter(&self) -> std::slice::Iter<'_, T> { self.as_slice().iter() }
     pub fn clear(&mut self) { self.n = 0; }
-    pub fn truncate(&mut self, n: usize) { if (self.n as usize) > n { self.n = n as u8; } }
 }
 
 impl<T: Copy + Default + PartialEq, const N: usize> FV<T, N> {

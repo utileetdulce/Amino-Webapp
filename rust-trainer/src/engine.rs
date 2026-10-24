@@ -429,7 +429,7 @@ impl State {
 
     pub fn interesting_nodes(&self, pi: usize) -> FV<u8, 96> {
         let mut out: FV<u8, 96> = FV::new();
-        let mut add = |out: &mut FV<u8, 96>, n: u8| { if !out.contains(n) { out.push(n); } };
+        let add = |out: &mut FV<u8, 96>, n: u8| { if !out.contains(n) { out.push(n); } };
         for r in self.resources.iter() {
             if r.owner < 0 && r.carrier < 0 && r.cell >= 0 {
                 for i in 0..self.cells[r.cell as usize].ncomps() { add(&mut out, r.cell as u8 * 3 + i as u8); }

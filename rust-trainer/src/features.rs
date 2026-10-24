@@ -11,7 +11,7 @@ pub const SF: usize = 41;
 pub struct Fr { pub cell: u8, pub val: u8 }
 
 pub struct Ctx {
-    pub pi: usize, pub node: i32, pub ant_cell: i32,
+    pub pi: usize, pub ant_cell: i32,
     pub dist_ant: [i16; 64], pub dist_hill: [i16; 64],
     pub free_res: FV<Fr, 12>, pub carriers: FV<Fr, 6>, pub enemy_pos: FV<u8, 16>,
     pub cur_hill_dist: i32, pub hs: FV<u8, 12>,
@@ -67,7 +67,7 @@ pub fn build_ctx(s: &State, pi: usize) -> Ctx {
     }
     let ant_cell = if node >= 0 { node / 3 } else { -1 };
     let cur_hill_dist = if ant_cell >= 0 && dist_hill[ant_cell as usize] >= 0 { dist_hill[ant_cell as usize] as i32 } else { 99 };
-    Ctx { pi, node, ant_cell, dist_ant, dist_hill, free_res, carriers, enemy_pos, cur_hill_dist, hs }
+    Ctx { pi, ant_cell, dist_ant, dist_hill, free_res, carriers, enemy_pos, cur_hill_dist, hs }
 }
 
 #[inline] fn mn(a: i32, b: i32) -> i32 { if a < b { a } else { b } }

@@ -149,15 +149,15 @@ fn main() {
     let steps = argf("steps", 150.0) as usize; // upper bound of minibatches per iteration
     let pcoef = argf("pcoef", 1.0) as f32; let vcoef = argf("vcoef", 1.0) as f32; // loss weights (0 freezes that head)
     let gate_every = argf("gate-every", 20.0) as u64; // champion gating: every N iterations play current vs champion (0 = off)
-    let gate_games = argf("gate-games", 60.0) as usize;
-    let gate_win = argf("gate-win", 0.55); // promote the current net to champion at >= this score
-    let gate_revert = argf("gate-revert", 0.40); // go back to the champion if the score is below this (stops drift); 0 = never
+    let gate_games = argf("gate-games", 200.0) as usize;
+    let gate_win = argf("gate-win", 0.56); // promote the current net to champion at >= this score
+    let gate_revert = argf("gate-revert", 0.42); // go back to the champion if the score is below this (stops drift); 0 = never
     let ratio = argf("ratio", 4.0); // samples drawn per newly generated sample (limits over-fitting of the replay buffer)
     let min_buffer = argf("min-buffer", 5000.0) as usize; // no updates until the buffer holds this many samples
     mcts::TOPK.store(argf("topk", 12.0) as usize, std::sync::atomic::Ordering::Relaxed);
     mcts::CPUCT_MILLI.store((argf("cpuct", 1.25) * 1000.0) as usize, std::sync::atomic::Ordering::Relaxed);
     let batch = argf("batch", 128.0) as usize;
-    let lr = argf("lr", 3e-4);
+    let lr = argf("lr", 5e-5); // long runs at >= 1e-4 drifted and got weaker (see README)
     let buffer_cap = argf("buffer", 40000.0) as usize;
     let eval_every = argf("eval-every", 5.0) as u64;
     let eval_games = argf("eval-games", 16.0) as usize;
@@ -191,6 +191,7 @@ fn main() {
         }
         _ => { println!("init: random network (consider warm-starting with tools/train-cli.mjs first)"); Net::random(DEFAULT_ARCH, &mut rng) }
     };
+    if lr > 1.0e-4 { println!("WARNING: lr {} is high - in our tests runs with lr >= 1e-4 drifted and ended up weaker than the start model (use <= 5e-5 and gating).", lr); }
     println!("config {}", json!({"workers": workers, "sims": sims, "games": games, "steps": steps, "batch": batch, "lr": lr, "buffer": buffer_cap,
         "evalEvery": eval_every, "evalGames": eval_games, "oppMix": opp_mix, "depth": depth, "minutes": minutes, "iters": iters, "tauMoves": tau_moves, "seed": seed}));
 

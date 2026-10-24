@@ -1,0 +1,17 @@
+{
+ "az.json": {
+  "status": "weak",
+  "note": "Langer M4-Lauf (1.872 Iterationen, 44.928 Spiele, Lernrate 3e-4): Netz allein 50 % gegen die Heuristik, im Direktvergleich 40 % gegen „AZ kurz“. Nicht empfohlen.",
+  "name": "AZ lang M4 (Iter. 1872)"
+ },
+ "az.best.json": {
+  "status": "weak",
+  "note": "Bester Zwischenstand des langen M4-Laufs (Iter. 1415): 65 % gegen die Heuristik, 41 % im Direktvergleich gegen „AZ kurz“. Nicht empfohlen.",
+  "name": "AZ lang M4 (bester Zwischenstand, Iter. 1415)"
+ },
+ "az.champion.json": {
+  "status": "weak",
+  "note": "Champion des langen M4-Laufs (Iter. 1860): 53 % gegen die Heuristik, 40 % gegen „AZ kurz“ und 37 % gegen das PPO-Modell (je 200 Partien). Gating mit nur 60 Partien beförderte durch Zufall – nicht empfohlen.",
+  "name": "AZ lang M4 (Champion, Iter. 1860)"
+ }
+}

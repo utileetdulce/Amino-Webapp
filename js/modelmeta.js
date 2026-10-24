@@ -52,6 +52,7 @@ export function modelLabel(sum) {
   if (sum.games) parts.push(`${sum.games.toLocaleString('de-DE')} Spiele`);
   let l = parts.join(' · ');
   if (sum.default) l += ' ★';
+  if (sum.status === 'weak') l += ' · schwach';
   if (!rulesStatus(sum).ok) l += ' ⚠';
   return l;
 }

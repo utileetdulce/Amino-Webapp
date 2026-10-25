@@ -35,7 +35,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
             last_turn = s.turn_no;
             if cfg.vtd > 0.0 && !open.is_empty() {
                 let ctx = build_ctx(&s, s.cur);
-                let v = net.value(&make_obs(&s, &ctx, &[], net.uses_graph()));
+                let v = net.value(&make_obs(&s, &ctx, &[], net.gver()));
                 for &i in &open { let pi = samples[i].0; samples[i].3 = Some(if pi == s.cur { v } else { -v }); }
             }
             open.clear();
@@ -47,7 +47,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
         let r = mcts.search(&s, cfg.sims, true, rng);
         let tot: f64 = { let t: u32 = r.visits.iter().sum(); if t == 0 { 1.0 } else { t as f64 } };
         let ctx = build_ctx(&s, pi);
-        let obs = make_obs(&s, &ctx, &r.acts, net.uses_graph() || cfg.graph);
+        let obs = make_obs(&s, &ctx, &r.acts, net.gver().max(if cfg.graph { 1 } else { 0 }));
         let tgt: Vec<f32> = if cfg.qbeta > 0.0 {
             // policy improvement: pi' ∝ prior · exp(beta · (Q(a) - V)); robust with few simulations (visit counts are mostly exploration)
             let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + cfg.qbeta * (q as f64 - r.value)).collect();

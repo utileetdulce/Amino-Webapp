@@ -1,25 +1,28 @@
 // Graph network (inference only): a small message-passing network over the board's path components feeds the MLP heads.
 // Port of the `hg > 0` architecture in rust-trainer/src/nn.rs + build_graph in features.rs (training happens in the Rust trainer).
-//   node = one path component (cell, comp); edges follow open tile edges; 20 features per node (own view)
+//   node = one path component (cell, comp); edges follow open tile edges; per-node features in the current player's view
 //   h0 = relu(x Win + b); per layer: h += relu(b + h Wself + sum_e h[nbr_e] We[e]);
-//   state input = [41 state features, mean node embedding, own ant embedding, enemy ant embedding];
-//   candidate input additionally gets the mean embedding of the nodes the action targets.
+//   state input = [41 state features, mean node embedding, own ant embedding, enemy ant embedding, (v2) global extras];
+//   candidate input additionally gets the mean embedding of the nodes the action targets and (v2) placement/transport extras.
+// Feature version fv: 1 = 20 node features; 2 adds enemy reach, regions, frontier, global extras and candidate extras.
 import { SF, AF } from './features.js';
 import { cellX, cellY, isUp, neighborId, neighbor } from './geometry.js';
-import { compsOf } from './engine.js';
+import { compsOf, bfs, antStarts, hillCells, nodeCell, makeCellShape } from './engine.js';
 
-export const NF = 20;
+export const NF = 20, NF2 = 32, GXN = 14, CXN = 17;
 const EXTK = 3;
+const R_ANT = 1, R_FOE = 2, R_MYH = 4, R_EH = 8, R_FREE = 16;
+const nfOf = (a) => (a.fv >= 2 ? NF2 : NF), gxnOf = (a) => (a.fv >= 2 ? GXN : 0), cxnOf = (a) => (a.fv >= 2 ? CXN : 0);
 
 function layout(a) {
   const { h1, h2, hv, hg, gl } = a;
-  const nin = SF + EXTK * hg;
+  const nin = SF + EXTK * hg + gxnOf(a);
   let o = 0; const L = { nin };
   const take = (n) => { const r = o; o += n; return r; };
   L.ws = take(nin * h1); L.wa = take(AF * h1); L.b1 = take(h1); L.w2 = take(h1 * h2); L.b2 = take(h2); L.w3 = take(h2); L.b3 = take(1);
   L.v1 = take(nin * hv); L.bv1 = take(hv); L.v2 = take(hv); L.bv2 = take(1);
-  L.wc = take(hg * h1); L.v3 = take(hv); L.bv3 = take(1); L.win = take(NF * hg); L.bin = take(hg);
-  L.lsz = 4 * hg * hg + hg; L.gl0 = take(L.lsz * gl);
+  L.wc = take(hg * h1); L.v3 = take(hv); L.bv3 = take(1); L.win = take(nfOf(a) * hg); L.bin = take(hg);
+  L.lsz = 4 * hg * hg + hg; L.gl0 = take(L.lsz * gl); L.wx = take(cxnOf(a) * h1);
   L.size = o;
   return L;
 }
@@ -34,10 +37,25 @@ function addmv(out, x, xo, n, w, wo, width) {
 }
 
 const compIdx = (c, edge) => { const cs = compsOf(c); for (let i = 0; i < cs.length; i++) if (cs[i].includes(edge)) return i; return 0; };
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+function cellMin(map) {
+  const m = new Map();
+  for (const [n, d] of map) { const c = nodeCell(n); if (!m.has(c) || m.get(c) > d) m.set(c, d); }
+  return m;
+}
+function mergeMin(a, b) { for (const [k, d] of b) if (!a.has(k) || d < a.get(k)) a.set(k, d); }
+
+// P(roll >= d) and E[min(roll, d)] / 6 for one die (0..5) or two dice
+function rollOdds(two, d) {
+  let p = 0, e = 0, tot = 0;
+  for (let a = 0; a < 6; a++) for (let b = 0; b < (two ? 6 : 1); b++) { const r = a + b; tot++; if (r >= d) p++; e += Math.min(r, d); }
+  return [p / tot, e / tot / 6];
+}
 
 export class GNet {
   constructor(arch, theta) {
-    this.arch = { ...arch };
+    this.arch = { fv: 1, ...arch };
     this.L = layout(this.arch);
     if (theta.length !== this.L.size) throw new Error(`theta size ${theta.length} != ${this.L.size}`);
     this.theta = Float32Array.from(theta);
@@ -47,18 +65,19 @@ export class GNet {
 
   buildGraph(ctx, acts) {
     const { s, pi, p } = ctx;
+    const v2 = this.arch.fv >= 2, nf = nfOf(this.arch);
     const ids = Object.keys(s.cells).map(Number);
     const base = new Map(); let n = 0;
     for (const cid of ids) { base.set(cid, n); n += compsOf(s.cells[cid]).length; }
-    const x = new Float32Array(n * NF);
+    const x = new Float32Array(n * nf);
     const nbr = new Int16Array(n * 3).fill(-1);
     const antCell = p.ant ? p.ant.cell : -1;
     const antNode = p.ant ? base.get(antCell) + compIdx(s.cells[antCell], p.ant.edge) : -1;
-    let foe = -1; const foeCells = new Set();
+    let foe = -1; const foeCells = new Set(); const foeNodes = [];
     for (let q = 0; q < s.n; q++) {
       if (q === pi) continue;
       const a = s.players[q].ant;
-      if (a) { foeCells.add(a.cell); if (foe < 0) foe = base.get(a.cell) + compIdx(s.cells[a.cell], a.edge); }
+      if (a) { foeCells.add(a.cell); const nd = base.get(a.cell) + compIdx(s.cells[a.cell], a.edge); foeNodes.push(nd); if (foe < 0) foe = nd; }
     }
     const carryVal = p.carry >= 0 ? p.values[s.resources[p.carry].kind] / 3 : 0;
     for (const cid of ids) {
@@ -68,7 +87,7 @@ export class GNet {
       const da = ctx.distAnt.get(cid), dh = ctx.distHill.get(cid);
       const comps = compsOf(c);
       for (let ci = 0; ci < comps.length; ci++) {
-        const node = base.get(cid) + ci, o = node * NF, edges = comps[ci];
+        const node = base.get(cid) + ci, o = node * nf, edges = comps[ci];
         x[o] = isUp(c.x, c.y) ? 1 : 0;
         for (const e of edges) x[o + 1 + e] = 1;
         x[o + 4] = comps.length / 3;
@@ -94,31 +113,146 @@ export class GNet {
         }
       }
     }
+    const g = { n, nf, x, nbr, ant: antNode, foe, cand: null, gx: null, cx: null, region: null, rflags: null, base };
+    if (v2) this.addV2(g, ctx, ids, foeNodes);
+    // candidates
     const cellNodes = (cid, out) => { const c = s.cells[cid]; if (!c) return; const b = base.get(cid), k = compsOf(c).length; for (let i = 0; i < k; i++) out.push(b + i); };
-    const cand = acts.map((a) => {
+    g.cx = v2 ? new Float32Array(acts.length * CXN) : null;
+    g.cand = acts.map((a, ci) => {
       const v = [];
       switch (a.t) {
         case 'move': case 'tmove': case 'wings': {
-          const cid = Math.floor(a.to / 3), ci = a.to - cid * 3, c = s.cells[cid];
-          if (c) v.push(base.get(cid) + Math.min(ci, compsOf(c).length - 1));
+          const cid = Math.floor(a.to / 3), k = a.to - cid * 3, c = s.cells[cid];
+          if (c) v.push(base.get(cid) + Math.min(k, compsOf(c).length - 1));
           break;
         }
         case 'place': {
           const cx = cellX(a.cell), cy = cellY(a.cell);
+          const regs = []; let frontier = 0;
+          const sh = makeCellShape(cx, cy, a.tile, a.rot);
           for (let e = 0; e < 3; e++) {
             const [nid] = neighborId(a.cell, e);
             const nc = s.cells[nid];
-            if (nc) { const [, , ne] = neighbor(cx, cy, e); if (nc.open[ne]) v.push(base.get(nid) + compIdx(nc, ne)); }
+            if (nc) {
+              const [, , ne] = neighbor(cx, cy, e);
+              if (nc.open[ne]) { const node = base.get(nid) + compIdx(nc, ne); v.push(node); if (v2) { const r = g.region[node]; if (!regs.includes(r)) regs.push(r); } }
+            } else if (sh.open[e]) frontier++;
+          }
+          if (v2) {
+            const o = ci * CXN, cxv = g.cx;
+            for (let e = 0; e < 3; e++) cxv[o + e] = sh.open[e];
+            const same = (i, j) => sh.comps.some((m) => m.includes(i) && m.includes(j));
+            cxv[o + 3] = same(0, 1) ? 1 : 0; cxv[o + 4] = same(0, 2) ? 1 : 0; cxv[o + 5] = same(1, 2) ? 1 : 0;
+            cxv[o + 6] = frontier / 3;
+            let un = 0, singleAntFree = false, singleAntFoe = false;
+            for (const r of regs) { const f = g.rflags[r]; un |= f; if ((f & R_ANT) && (f & R_FREE)) singleAntFree = true; if ((f & R_ANT) && (f & R_FOE)) singleAntFoe = true; }
+            cxv[o + 7] = un & R_ANT ? 1 : 0; cxv[o + 8] = un & R_FOE ? 1 : 0; cxv[o + 9] = un & R_FREE ? 1 : 0;
+            cxv[o + 10] = un & R_MYH ? 1 : 0; cxv[o + 11] = un & R_EH ? 1 : 0;
+            cxv[o + 12] = regs.length >= 2 ? 1 : 0;
+            cxv[o + 13] = regs.length >= 2 && (un & R_ANT) && (un & R_FREE) && !singleAntFree ? 1 : 0;
+            cxv[o + 14] = regs.length >= 2 && (un & R_ANT) && (un & R_FOE) && !singleAntFoe ? 1 : 0;
           }
           break;
         }
         case 'bridge': cellNodes(a.a, v); cellNodes(a.b, v); break;
         case 'blockage': case 'overlay': case 'inc_hill': cellNodes(a.cell, v); break;
+        case 'transport':
+          if (v2) { const [pd, ea] = rollOdds(!!a.card, ctx.curHillDist >= 99 ? 99 : ctx.curHillDist); g.cx[ci * CXN + 15] = pd; g.cx[ci * CXN + 16] = ea; }
+          break;
         default: break;
       }
       return v;
     });
-    return { n, x, nbr, ant: antNode, foe, cand };
+    return g;
+  }
+
+  // v2: node features 20..31, regions, global extras
+  addV2(g, ctx, ids, foeNodes) {
+    const { s, pi, p } = ctx;
+    const { n, nf, nbr, base, x } = g;
+    const region = new Int32Array(n).fill(-1);
+    const size = []; const stack = []; let nreg = 0;
+    for (let st = 0; st < n; st++) {
+      if (region[st] >= 0) continue;
+      region[st] = nreg; stack.push(st); let cnt = 0;
+      while (stack.length) {
+        const v = stack.pop(); cnt++;
+        for (let e = 0; e < 3; e++) { const m = nbr[v * 3 + e]; if (m >= 0 && region[m] < 0) { region[m] = nreg; stack.push(m); } }
+      }
+      size.push(cnt); nreg++;
+    }
+    const rflags = new Uint8Array(nreg);
+    if (g.ant >= 0) rflags[region[g.ant]] |= R_ANT;
+    for (const fn of foeNodes) rflags[region[fn]] |= R_FOE;
+    for (const cid of ids) {
+      const c = s.cells[cid];
+      const freeHere = ctx.freeRes.some((r) => r.cell === cid);
+      const k = compsOf(c).length;
+      for (let ci = 0; ci < k; ci++) {
+        const r = region[base.get(cid) + ci];
+        if (c.hill === pi) rflags[r] |= R_MYH;
+        if (c.hill >= 0 && c.hill !== pi) rflags[r] |= R_EH;
+        if (freeHere) rflags[r] |= R_FREE;
+      }
+    }
+    const distFoe = new Map(), distEh = new Map();
+    for (let q = 0; q < s.n; q++) {
+      if (q === pi) continue;
+      if (s.players[q].ant) mergeMin(distFoe, cellMin(bfs(s, q, antStarts(s, q))));
+      const hs = hillCells(s, q);
+      if (hs.length) mergeMin(distEh, cellMin(bfs(s, q, hs.map((h) => h * 3), { underground: false })));
+    }
+    const laidNow = new Set(s.resources.filter((r) => r.owner < 0 && r.carrier < 0 && r.cell >= 0 && r.laid === s.turnNo).map((r) => r.cell));
+    for (const cid of ids) {
+      const c = s.cells[cid];
+      const dfo = distFoe.get(cid), deh = distEh.get(cid);
+      const comps = compsOf(c);
+      for (let ci = 0; ci < comps.length; ci++) {
+        const node = base.get(cid) + ci, o = node * nf;
+        const r = region[node], fl = rflags[r];
+        let frE = 0;
+        for (const e of comps[ci]) { const [nid] = neighborId(cid, e); if (!s.cells[nid]) frE++; }
+        x[o + 20] = dfo !== undefined ? Math.min(dfo, 14) / 14 : 1;
+        x[o + 21] = dfo !== undefined ? 1 : 0;
+        x[o + 22] = deh !== undefined ? Math.min(deh, 14) / 14 : 1;
+        x[o + 23] = deh !== undefined ? 1 : 0;
+        x[o + 24] = fl & R_ANT ? 1 : 0; x[o + 25] = fl & R_FOE ? 1 : 0; x[o + 26] = fl & R_MYH ? 1 : 0; x[o + 27] = fl & R_EH ? 1 : 0; x[o + 28] = fl & R_FREE ? 1 : 0;
+        x[o + 29] = size[r] / n;
+        x[o + 30] = frE / 3;
+        x[o + 31] = laidNow.has(cid) ? 1 : 0;
+      }
+    }
+    // global extras
+    let fo = -1;
+    for (let q = 0; q < s.n; q++) if (q !== pi) { fo = q; break; }
+    const gx = new Float32Array(GXN);
+    gx[6] = 1;
+    if (fo >= 0) {
+      const pq = s.players[fo];
+      gx[0] = Math.min(pq.hand.length, 12) / 8;
+      gx[1] = pq.cards.length / 6;
+      gx[2] = pq.hillsInHand / 2;
+      gx[3] = pq.ant ? 1 : 0;
+      gx[4] = pq.carry >= 0 ? 1 : 0;
+      if (pq.carry >= 0) gx[5] = p.values[s.resources[pq.carry].kind] / 3;
+      if (pq.carry >= 0 && pq.ant) { const d = distEh.get(pq.ant.cell); if (d !== undefined) gx[6] = Math.min(d, 14) / 14; }
+      gx[12] = s.resources.filter((r) => r.owner === fo).length / 6;
+    }
+    gx[7] = p.ant && distFoe.has(p.ant.cell) ? 1 : 0;
+    let dm = 14, df = 14, nm = 0, nfo = 0, nregFree = 0;
+    for (const r of ctx.freeRes) {
+      const cid = r.cell;
+      if (ctx.distAnt.has(cid)) { dm = Math.min(dm, ctx.distAnt.get(cid)); nm++; }
+      if (distFoe.has(cid)) { df = Math.min(df, distFoe.get(cid)); nfo++; }
+      if (g.ant >= 0 && region[base.get(cid)] === region[g.ant]) nregFree++;
+    }
+    gx[8] = clamp((df - dm) / 14, -1, 1);
+    gx[9] = nm / 4; gx[10] = nfo / 4;
+    let dhMy = 14;
+    for (const h of ctx.hs) if (distFoe.has(h)) dhMy = Math.min(dhMy, distFoe.get(h));
+    gx[11] = dhMy / 14;
+    gx[13] = nregFree / 4;
+    g.gx = gx; g.region = region; g.rflags = rflags;
   }
 
   // GNN forward; returns the final node embeddings
@@ -128,7 +262,7 @@ export class GNet {
     const tmp = new Float32Array(hg);
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < hg; j++) tmp[j] = th[L.bin + j];
-      addmv(tmp, g.x, i * NF, NF, th, L.win, hg);
+      addmv(tmp, g.x, i * g.nf, g.nf, th, L.win, hg);
       for (let j = 0; j < hg; j++) h[i * hg + j] = tmp[j] > 0 ? tmp[j] : 0;
     }
     for (let k = 0; k < gl; k++) {
@@ -145,10 +279,10 @@ export class GNet {
     return h;
   }
 
-  /** value (actor's view) and, when acts are given, candidate logits */
+  /** value (actor's view) and, when A (candidate matrix) is given, candidate logits */
   evaluate(ctx, acts, sf, A = null) {
-    const wantLogits = !!A;
     const { h1, h2, hv, hg } = this.arch, L = this.L, th = this.theta;
+    const wantLogits = !!A;
     const g = this.buildGraph(ctx, wantLogits ? acts : []);
     const h = this.embed(g);
     const xs = new Float32Array(L.nin);
@@ -159,7 +293,7 @@ export class GNet {
     }
     if (g.ant >= 0) for (let k = 0; k < hg; k++) xs[SF + hg + k] = h[g.ant * hg + k];
     if (g.foe >= 0) for (let k = 0; k < hg; k++) xs[SF + 2 * hg + k] = h[g.foe * hg + k];
-    // value
+    if (g.gx) xs.set(g.gx, SF + EXTK * hg);
     const a = new Float32Array(hv);
     for (let j = 0; j < hv; j++) a[j] = th[L.bv1 + j];
     addmv(a, xs, 0, L.nin, th, L.v1, hv);
@@ -171,6 +305,7 @@ export class GNet {
     addmv(hs, xs, 0, L.nin, th, L.ws, h1);
     const logits = new Float32Array(acts.length);
     const a1 = new Float32Array(h1), a2 = new Float32Array(h2), ce = new Float32Array(hg);
+    const cxn = cxnOf(this.arch);
     for (let c = 0; c < acts.length; c++) {
       a1.set(hs);
       addmv(a1, A, c * AF, AF, th, L.wa, h1);
@@ -180,6 +315,7 @@ export class GNet {
         for (const nd of nodes) for (let k = 0; k < hg; k++) ce[k] += h[nd * hg + k] / nodes.length;
         addmv(a1, ce, 0, hg, th, L.wc, h1);
       }
+      if (cxn) addmv(a1, g.cx, c * cxn, cxn, th, L.wx, h1);
       for (let j = 0; j < h1; j++) if (a1[j] < 0) a1[j] = 0;
       for (let k = 0; k < h2; k++) a2[k] = th[L.b2 + k];
       addmv(a2, a1, 0, h1, th, L.w2, h2);

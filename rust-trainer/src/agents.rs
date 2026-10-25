@@ -102,7 +102,7 @@ pub fn nn_act(net: &Net, s: &State, temp: f32, rng: &mut Rng) -> Act {
     let acts = cap_candidates(acts, MAX_CANDS, rng);
     let pi = s.actor();
     let ctx = build_ctx(s, pi);
-    let o = make_obs(s, &ctx, &acts, net.uses_graph());
+    let o = make_obs(s, &ctx, &acts, net.gver());
     let e = net.encode(&o, false);
     let fp = net.forward_policy(&e, &o.a, o.n, false);
     let p = softmax(&fp.logits, temp);

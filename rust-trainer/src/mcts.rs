@@ -92,7 +92,7 @@ impl<'a> Mcts<'a> {
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
         let ctx = build_ctx(s, s.actor());
-        let o = make_obs(s, &ctx, if want_priors { acts } else { &[] }, self.net.uses_graph());
+        let o = make_obs(s, &ctx, if want_priors { acts } else { &[] }, self.net.gver());
         let e = self.net.encode(&o, false);
         let v = if self.value_zero { 0.0 } else { self.net.forward_value(&e, false).v };
         let priors = if want_priors { softmax(&self.net.forward_policy(&e, &o.a, o.n, false).logits, 1.0) } else { Vec::new() };
@@ -110,7 +110,7 @@ impl<'a> Mcts<'a> {
         let rv = if r.over { if r.winner < 0 { 0.0 } else if r.winner as usize == me { 1.0 } else { -1.0 } }
             else {
                 let ctx = build_ctx(&r, r.actor());
-                let x = self.net.value(&make_obs(&r, &ctx, &[], self.net.uses_graph())); if r.actor() == me { x } else { -x }
+                let x = self.net.value(&make_obs(&r, &ctx, &[], self.net.gver())); if r.actor() == me { x } else { -x }
             };
         ((1.0 - self.roll_w) as f32) * v + (self.roll_w as f32) * rv
     }

@@ -2,32 +2,39 @@
 // With hg > 0 the MLP additionally receives embeddings from a small graph network over the board (see features::Graph):
 // pooled / own-ant / enemy-ant embeddings join the state input, and the embedding of each candidate's target cells joins
 // the candidate input. Extra weights start at zero when grown from a plain MLP (`grow_from`), so the function is unchanged.
-use crate::features::{Graph, Obs, AF, NF, SF};
+use crate::features::{Graph, Obs, AF, CXN, GXN, NF, NF2, SF};
 use crate::rng::Rng;
 
 pub const EXTK: usize = 3;
 
 #[derive(Clone, Copy)]
-pub struct Arch { pub h1: usize, pub h2: usize, pub hv: usize, pub hg: usize, pub gl: usize }
-pub const DEFAULT_ARCH: Arch = Arch { h1: 64, h2: 32, hv: 48, hg: 0, gl: 0 };
+/// fv: graph feature version (0 = plain MLP, 1 = board graph, 2 = + enemy reach / regions / placement-effect features)
+pub struct Arch { pub h1: usize, pub h2: usize, pub hv: usize, pub hg: usize, pub gl: usize, pub fv: usize }
+pub const DEFAULT_ARCH: Arch = Arch { h1: 64, h2: 32, hv: 48, hg: 0, gl: 0, fv: 0 };
+impl Arch {
+    pub fn nf(&self) -> usize { if self.fv >= 2 { NF2 } else { NF } }
+    pub fn gxn(&self) -> usize { if self.fv >= 2 { GXN } else { 0 } }
+    pub fn cxn(&self) -> usize { if self.fv >= 2 { CXN } else { 0 } }
+}
 
 #[derive(Clone, Copy)]
 struct Lay { nin: usize, ws: usize, wa: usize, b1: usize, w2: usize, b2: usize, w3: usize, b3: usize, v1: usize, bv1: usize, v2: usize, bv2: usize,
-    wc: usize, v3: usize, bv3: usize, win: usize, bin: usize, gl0: usize, lsz: usize, size: usize }
+    wc: usize, v3: usize, bv3: usize, win: usize, bin: usize, gl0: usize, lsz: usize, wx: usize, size: usize }
 
 fn layout(a: Arch) -> Lay {
     let (h1, h2, hv, hg) = (a.h1, a.h2, a.hv, a.hg);
-    let nin = SF + EXTK * hg;
+    let nin = SF + EXTK * hg + a.gxn();
     let mut o = 0;
     let mut take = |n: usize| { let r = o; o += n; r };
     let ws = take(nin * h1); let wa = take(AF * h1); let b1 = take(h1); let w2 = take(h1 * h2); let b2 = take(h2);
     let w3 = take(h2); let b3 = take(1); let v1 = take(nin * hv); let bv1 = take(hv); let v2 = take(hv); let bv2 = take(1);
-    let (mut wc, mut v3, mut bv3, mut win, mut bin, mut gl0, mut lsz) = (0, 0, 0, 0, 0, 0, 0);
+    let (mut wc, mut v3, mut bv3, mut win, mut bin, mut gl0, mut lsz, mut wx) = (0, 0, 0, 0, 0, 0, 0, 0);
     if hg > 0 {
-        wc = take(hg * h1); v3 = take(hv); bv3 = take(1); win = take(NF * hg); bin = take(hg);
+        wc = take(hg * h1); v3 = take(hv); bv3 = take(1); win = take(a.nf() * hg); bin = take(hg);
         lsz = 4 * hg * hg + hg; gl0 = take(lsz * a.gl);
+        wx = take(a.cxn() * h1);
     }
-    Lay { nin, ws, wa, b1, w2, b2, w3, b3, v1, bv1, v2, bv2, wc, v3, bv3, win, bin, gl0, lsz, size: o }
+    Lay { nin, ws, wa, b1, w2, b2, w3, b3, v1, bv1, v2, bv2, wc, v3, bv3, win, bin, gl0, lsz, wx, size: o }
 }
 
 #[derive(Clone)]
@@ -36,7 +43,7 @@ pub struct Net { pub arch: Arch, l: Lay, pub theta: Vec<f32>, m: Vec<f32>, v: Ve
 pub struct Fp { pub logits: Vec<f32>, pub h1: Vec<f32>, pub h2: Vec<f32> }
 pub struct Fv { pub v: f32, pub aux: f32, pub act: Vec<f32> }
 pub struct GCache { h: Vec<Vec<f32>>, z: Vec<Vec<f32>> }
-pub struct Enc { pub xs: Vec<f32>, pub ce: Vec<f32>, cache: Option<GCache> }
+pub struct Enc { pub xs: Vec<f32>, pub ce: Vec<f32>, pub cx: Vec<f32>, cache: Option<GCache> }
 
 #[inline] fn addmv(out: &mut [f32], x: &[f32], w: &[f32], width: usize) {
     for (i, &xi) in x.iter().enumerate() {
@@ -49,6 +56,8 @@ pub struct Enc { pub xs: Vec<f32>, pub ce: Vec<f32>, cache: Option<GCache> }
 impl Net {
     pub fn size(&self) -> usize { self.l.size }
     pub fn uses_graph(&self) -> bool { self.arch.hg > 0 }
+    /// feature version the Obs must be built with (0 = no graph)
+    pub fn gver(&self) -> usize { if self.arch.hg > 0 { self.arch.fv.max(1) } else { 0 } }
     pub fn from_theta(arch: Arch, theta: Vec<f32>) -> Net {
         let l = layout(arch);
         assert_eq!(theta.len(), l.size, "theta size mismatch with arch");
@@ -82,7 +91,7 @@ impl Net {
     /// Plain MLP -> graph network with identical outputs (all weights that read the graph embeddings start at zero).
     pub fn grow_from(old: &Net, hg: usize, gl: usize, rng: &mut Rng) -> Net {
         assert_eq!(old.arch.hg, 0);
-        let arch = Arch { hg, gl, ..old.arch };
+        let arch = Arch { hg, gl, fv: 1, ..old.arch };
         let mut n = Net::random(arch, rng);
         let (lo, ln) = (old.l, n.l);
         let (h1, hv) = (arch.h1, arch.hv);
@@ -96,6 +105,27 @@ impl Net {
         n
     }
 
+    /// Graph net with feature version 1 -> version 2: new inputs start with zero weights, so outputs are unchanged.
+    pub fn grow_features(old: &Net, rng: &mut Rng) -> Net {
+        assert!(old.arch.hg > 0 && old.arch.fv == 1);
+        let arch = Arch { fv: 2, ..old.arch };
+        let mut n = Net::random(arch, rng);
+        let (lo, ln) = (old.l, n.l);
+        let (h1, hv, hg) = (arch.h1, arch.hv, arch.hg);
+        for x in n.theta[ln.win + NF * hg..ln.win + NF2 * hg].iter_mut() { *x = 0.0; }
+        for x in n.theta[ln.ws + lo.nin * h1..ln.ws + ln.nin * h1].iter_mut() { *x = 0.0; }
+        for x in n.theta[ln.v1 + lo.nin * hv..ln.v1 + ln.nin * hv].iter_mut() { *x = 0.0; }
+        for x in n.theta[ln.wx..ln.wx + CXN * h1].iter_mut() { *x = 0.0; }
+        let cp = |n: &mut Net, dst: usize, src: usize, len: usize| { n.theta[dst..dst + len].copy_from_slice(&old.theta[src..src + len]); };
+        cp(&mut n, ln.ws, lo.ws, lo.nin * h1); cp(&mut n, ln.wa, lo.wa, AF * h1); cp(&mut n, ln.b1, lo.b1, h1);
+        cp(&mut n, ln.w2, lo.w2, h1 * arch.h2); cp(&mut n, ln.b2, lo.b2, arch.h2); cp(&mut n, ln.w3, lo.w3, arch.h2); cp(&mut n, ln.b3, lo.b3, 1);
+        cp(&mut n, ln.v1, lo.v1, lo.nin * hv); cp(&mut n, ln.bv1, lo.bv1, hv); cp(&mut n, ln.v2, lo.v2, hv); cp(&mut n, ln.bv2, lo.bv2, 1);
+        cp(&mut n, ln.wc, lo.wc, hg * h1); cp(&mut n, ln.v3, lo.v3, hv); cp(&mut n, ln.bv3, lo.bv3, 1);
+        cp(&mut n, ln.win, lo.win, NF * hg); cp(&mut n, ln.bin, lo.bin, hg);
+        cp(&mut n, ln.gl0, lo.gl0, lo.lsz * arch.gl);
+        n
+    }
+
     // ---------- graph network ----------
     fn gnn_forward(&self, g: &Graph) -> GCache {
         let (l, hg, gl) = (self.l, self.arch.hg, self.arch.gl);
@@ -105,7 +135,7 @@ impl Net {
         for i in 0..nn {
             let o = &mut h0[i * hg..(i + 1) * hg];
             o.copy_from_slice(&th[l.bin..l.bin + hg]);
-            addmv(o, &g.x[i * NF..(i + 1) * NF], &th[l.win..l.win + NF * hg], hg);
+            addmv(o, &g.x[i * g.nf..(i + 1) * g.nf], &th[l.win..l.win + g.nf * hg], hg);
             for v in o.iter_mut() { if *v < 0.0 { *v = 0.0; } }
         }
         let mut hs = vec![h0]; let mut zs: Vec<Vec<f32>> = Vec::with_capacity(gl);
@@ -129,13 +159,14 @@ impl Net {
 
     /// Build the policy/value input of a decision (plus, for graph nets, the board embeddings).
     pub fn encode(&self, o: &Obs, keep: bool) -> Enc {
-        if self.arch.hg == 0 { return Enc { xs: o.s.to_vec(), ce: Vec::new(), cache: None }; }
+        if self.arch.hg == 0 { return Enc { xs: o.s.to_vec(), ce: Vec::new(), cx: Vec::new(), cache: None }; }
         let hg = self.arch.hg;
         let g = o.g.as_ref().expect("graph net needs Obs with graph");
         let cache = self.gnn_forward(g);
         let hl = cache.h.last().unwrap();
-        let mut xs = vec![0f32; SF + EXTK * hg];
+        let mut xs = vec![0f32; SF + EXTK * hg + self.arch.gxn()];
         xs[..SF].copy_from_slice(&o.s);
+        if self.arch.gxn() > 0 { let k = SF + EXTK * hg; xs[k..k + self.arch.gxn()].copy_from_slice(&g.gx); }
         if g.n > 0 {
             for i in 0..g.n { for k in 0..hg { xs[SF + k] += hl[i * hg + k]; } }
             let inv = 1.0 / g.n as f32; for k in 0..hg { xs[SF + k] *= inv; }
@@ -148,7 +179,7 @@ impl Net {
             let inv = 1.0 / nodes.len() as f32;
             for &nd in nodes { for k in 0..hg { ce[c * hg + k] += hl[nd as usize * hg + k] * inv; } }
         }
-        Enc { xs, ce, cache: if keep { Some(cache) } else { None } }
+        Enc { xs, ce, cx: g.cx.clone(), cache: if keep { Some(cache) } else { None } }
     }
 
     fn gnn_backward(&self, grad: &mut [f32], g: &Graph, cache: &GCache, dxs: &[f32], dce: &[f32]) {
@@ -202,13 +233,13 @@ impl Net {
         // input embedding: h0 = relu(x W + b)
         let h0 = &cache.h[0];
         for i in 0..nn {
-            let xi = &g.x[i * NF..(i + 1) * NF];
+            let xi = &g.x[i * g.nf..(i + 1) * g.nf];
             for k in 0..hg {
                 if h0[i * hg + k] <= 0.0 { continue; }
                 let d = dh[i * hg + k];
                 if d == 0.0 { continue; }
                 grad[l.bin + k] += d;
-                for a in 0..NF { if xi[a] != 0.0 { grad[l.win + a * hg + k] += xi[a] * d; } }
+                for a in 0..g.nf { if xi[a] != 0.0 { grad[l.win + a * hg + k] += xi[a] * d; } }
             }
         }
     }
@@ -271,6 +302,7 @@ impl Net {
             a1.copy_from_slice(&hs);
             addmv(&mut a1, &a[c * AF..(c + 1) * AF], &th[l.wa..l.wa + AF * h1], h1);
             if hg > 0 { addmv(&mut a1, &e.ce[c * hg..(c + 1) * hg], &th[l.wc..l.wc + hg * h1], h1); }
+            if self.arch.cxn() > 0 { let k = self.arch.cxn(); addmv(&mut a1, &e.cx[c * k..(c + 1) * k], &th[l.wx..l.wx + k * h1], h1); }
             for j in 0..h1 { if a1[j] < 0.0 { a1[j] = 0.0; } }
             a2.copy_from_slice(b2);
             addmv(&mut a2, &a1, &th[l.w2..l.w2 + h1 * h2], h2);
@@ -335,6 +367,10 @@ impl Net {
                 let x = o.a[c * AF + i]; if x == 0.0 { continue; }
                 let grow = &mut g[l.wa + i * h1..l.wa + (i + 1) * h1];
                 for j in 0..h1 { grow[j] += x * dh1[j]; }
+            }
+            if self.arch.cxn() > 0 {
+                let kx = self.arch.cxn();
+                for k in 0..kx { let x = e.cx[c * kx + k]; if x != 0.0 { for j in 0..h1 { g[l.wx + k * h1 + j] += x * dh1[j]; } } }
             }
             if hg > 0 {
                 for k in 0..hg {

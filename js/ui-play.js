@@ -6,6 +6,7 @@ import { GameController } from './game.js';
 import { describeAction, candidateText, CARD_NAMES, CARD_HELP } from './text.js';
 import { HostLink, GuestLink, openBus, unpack, extractCode } from './net.js';
 import { Net } from './nn.js';
+import { netFromJSON } from './gnet.js';
 import { listAllModels, fetchModel } from './store.js';
 import { modelLabel, rulesStatus, RULES_VERSION } from './modelmeta.js';
 
@@ -25,7 +26,7 @@ export const el = (tag, attrs = {}, ...kids) => {
 
 export async function getNetByName(key) {
   const m = await fetchModel(key);
-  return m ? Net.fromJSON(m.net) : null;
+  return m ? netFromJSON(m.net, Net) : null;
 }
 export const modelNames = listAllModels;
 

@@ -127,14 +127,16 @@ export class NNAgent {
     const ctx = buildCtx(s, pi);
     const sf = stateFeatures(ctx);
     const A = candidateMatrix(ctx, acts);
-    const { logits } = this.net.forwardPolicy(sf, A, acts.length);
+    const ev = this.net.graph ? this.net.evaluate(ctx, acts, sf, A) : null;
+    const logits = ev ? ev.logits : this.net.forwardPolicy(sf, A, acts.length).logits;
+    const valueOf = () => (ev ? ev.v : this.net.forwardValue(sf));
     const p = softmax(logits, this.sample ? this.temperature : 1);
     let idx;
     if (this.sample) idx = sampleIdx(p);
     else { idx = 0; for (let i = 1; i < p.length; i++) if (p[i] > p[idx]) idx = i; }
-    if (info) { info.acts = acts; info.probs = p; info.idx = idx; info.value = this.net.forwardValue(sf); info.sf = sf; info.A = A; info.logits = logits; }
+    if (info) { info.acts = acts; info.probs = p; info.idx = idx; info.value = valueOf(); info.sf = sf; info.A = A; info.logits = logits; }
     if (this.recorder) {
-      this.recorder({ player: pi, s: sf, A, n: acts.length, a: idx, logp: Math.log(Math.max(p[idx], 1e-8)), v: this.net.forwardValue(sf) });
+      this.recorder({ player: pi, s: sf, A, n: acts.length, a: idx, logp: Math.log(Math.max(p[idx], 1e-8)), v: valueOf() });
     }
     return acts[idx];
   }

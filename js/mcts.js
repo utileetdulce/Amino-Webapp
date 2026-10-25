@@ -70,6 +70,10 @@ export class MCTS {
   evaluate(s, acts, wantPriors) {
     const ctx = buildCtx(s, actor(s));
     const sf = stateFeatures(ctx);
+    if (this.net.graph) {
+      const r = this.net.evaluate(ctx, acts, sf, wantPriors ? candidateMatrix(ctx, acts) : null);
+      return { v: r.v, priors: wantPriors ? softmax(r.logits) : null };
+    }
     const v = this.net.forwardValue(sf);
     let priors = null;
     if (wantPriors) {

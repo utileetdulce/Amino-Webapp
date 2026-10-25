@@ -1,7 +1,8 @@
 // Port of js/mcts.js: PUCT + determinization, open-loop tree keyed by action.
 use crate::engine::*;
 use crate::features::*;
-use crate::nn::{softmax, Net};
+use crate::nn::Net;
+use crate::nn::softmax;
 use crate::rng::Rng;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -91,13 +92,10 @@ impl<'a> Mcts<'a> {
 
     fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
         let ctx = build_ctx(s, s.actor());
-        let mut sf = [0f32; SF];
-        state_features(s, &ctx, &mut sf);
-        let v = if self.value_zero { 0.0 } else { self.net.forward_value(&sf, false).0 };
-        let priors = if want_priors {
-            let a = candidate_matrix(s, &ctx, acts);
-            softmax(&self.net.forward_policy(&sf, &a, acts.len(), false).logits, 1.0)
-        } else { Vec::new() };
+        let o = make_obs(s, &ctx, if want_priors { acts } else { &[] }, self.net.uses_graph());
+        let e = self.net.encode(&o, false);
+        let v = if self.value_zero { 0.0 } else { self.net.forward_value(&e, false).v };
+        let priors = if want_priors { softmax(&self.net.forward_policy(&e, &o.a, o.n, false).logits, 1.0) } else { Vec::new() };
         (v, priors)
     }
 
@@ -111,8 +109,8 @@ impl<'a> Mcts<'a> {
         while !r.over && r.turn_no < stop && g < 2000 { g += 1; let a = crate::agents::heuristic_act(&r, 4.0, rng); r.apply(a); }
         let rv = if r.over { if r.winner < 0 { 0.0 } else if r.winner as usize == me { 1.0 } else { -1.0 } }
             else {
-                let ctx = build_ctx(&r, r.actor()); let mut sf = [0f32; SF]; state_features(&r, &ctx, &mut sf);
-                let x = self.net.forward_value(&sf, false).0; if r.actor() == me { x } else { -x }
+                let ctx = build_ctx(&r, r.actor());
+                let x = self.net.value(&make_obs(&r, &ctx, &[], self.net.uses_graph())); if r.actor() == me { x } else { -x }
             };
         ((1.0 - self.roll_w) as f32) * v + (self.roll_w as f32) * rv
     }

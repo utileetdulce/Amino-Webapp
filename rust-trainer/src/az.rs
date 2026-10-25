@@ -10,12 +10,12 @@ use rayon::prelude::*;
 /// `vw`: weight of the value loss. With `--vbalance` it is 1/(samples of this player in this game), so every player-game counts
 /// equally; otherwise losers (who make ~2x as many decisions) dominate and the value head learns "the side to move is losing",
 /// which MCTS turns into a bonus for ending the turn (measured with `amino-train diag`).
-pub struct Sample { pub s: [f32; SF], pub a: Vec<f32>, pub n: usize, pub tgt: Vec<f32>, pub z: f32, pub vw: f32 }
+pub struct Sample { pub obs: Obs, pub tgt: Vec<f32>, pub z: f32, pub z2: f32, pub zr: f32, pub vw: f32 }
 
 pub struct GameOut { pub samples: Vec<Sample>, pub winner: i32, pub turns: i32, pub learner: i32 }
 
 #[derive(Clone, Copy)]
-pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32, pub qbeta: f64, pub ttemp: f64, pub vbalance: bool, pub vtd: f64, pub draw_z: f32 }
+pub struct SpCfg { pub sims: usize, pub tau_moves: usize, pub dirichlet: f64, pub depth: i32, pub qbeta: f64, pub ttemp: f64, pub vbalance: bool, pub vtd: f64, pub draw_z: f32, pub graph: bool }
 
 pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng) -> GameOut {
     let num_players = 2;
@@ -35,9 +35,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
             last_turn = s.turn_no;
             if cfg.vtd > 0.0 && !open.is_empty() {
                 let ctx = build_ctx(&s, s.cur);
-                let mut sf = [0f32; SF];
-                state_features(&s, &ctx, &mut sf);
-                let v = net.forward_value(&sf, false).0;
+                let v = net.value(&make_obs(&s, &ctx, &[], net.uses_graph()));
                 for &i in &open { let pi = samples[i].0; samples[i].3 = Some(if pi == s.cur { v } else { -v }); }
             }
             open.clear();
@@ -49,9 +47,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
         let r = mcts.search(&s, cfg.sims, true, rng);
         let tot: f64 = { let t: u32 = r.visits.iter().sum(); if t == 0 { 1.0 } else { t as f64 } };
         let ctx = build_ctx(&s, pi);
-        let mut sf = [0f32; SF];
-        state_features(&s, &ctx, &mut sf);
-        let a = candidate_matrix(&s, &ctx, &r.acts);
+        let obs = make_obs(&s, &ctx, &r.acts, net.uses_graph() || cfg.graph);
         let tgt: Vec<f32> = if cfg.qbeta > 0.0 {
             // policy improvement: pi' ∝ prior · exp(beta · (Q(a) - V)); robust with few simulations (visit counts are mostly exploration)
             let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + cfg.qbeta * (q as f64 - r.value)).collect();
@@ -65,7 +61,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
         } else { r.visits.iter().map(|&v| (v as f64 / tot) as f32).collect() };
         let anchor = s.actions_this_turn == 0 && s.pending.is_none();
         open.push(samples.len());
-        samples.push((pi, Sample { s: sf, a, n: r.acts.len(), tgt, z: 0.0, vw: 1.0 }, anchor, None));
+        samples.push((pi, Sample { obs, tgt, z: 0.0, z2: 0.0, zr: 0.0, vw: 1.0 }, anchor, None));
         let tau = if searched < cfg.tau_moves { 1.0 } else { 0.1 };
         searched += 1;
         let idx = pick_by_visits(&r.visits, tau, rng);
@@ -77,7 +73,9 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
     let out = samples.into_iter().map(|(pi, mut x, anchor, boot)| {
         // draws (mostly the 90-round cap) count as `draw_z` for both sides; < 0 punishes the passive self-play equilibrium
         let z = if s.winner < 0 { cfg.draw_z } else if s.winner as usize == pi { 1.0 } else { -1.0 };
+        x.zr = z;
         x.z = match boot { Some(b) if !anchor => (cfg.vtd as f32) * b + (1.0 - cfg.vtd as f32) * z, _ => z };
+        { let best_other = (0..s.n).filter(|&q| q != pi).map(|q| s.score(q)).max().unwrap_or(0); x.z2 = ((s.score(pi) - best_other) as f32 / 7.0).clamp(-1.0, 1.0); }
         if cfg.vbalance { x.vw = 1.0 / cnt[pi] as f32; }
         x
     }).collect();
@@ -85,7 +83,7 @@ pub fn self_play_game(net: &Net, cfg: SpCfg, opp_heuristic: bool, rng: &mut Rng)
 }
 
 /// Minibatch SGD on the replay buffer; each minibatch gradient is computed in parallel on the rayon pool.
-pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, lr: f64, pcoef: f32, vcoef: f32, rng: &mut Rng) -> (f64, f64) {
+pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, lr: f64, pcoef: f32, vcoef: f32, auxcoef: f32, rng: &mut Rng) -> (f64, f64) {
     let size = net.size();
     let nthreads = rayon::current_num_threads().max(1);
     let chunk = batch.div_ceil(nthreads).max(1);
@@ -99,17 +97,20 @@ pub fn az_update(net: &mut Net, buffer: &[Sample], steps: usize, batch: usize, l
             let (mut pl, mut vl) = (0f64, 0f64);
             for &i in ch {
                 let d = &buffer[i];
-                let fp = netr.forward_policy(&d.s, &d.a, d.n, true);
+                let n = d.obs.n;
+                let enc = netr.encode(&d.obs, true);
+                let fp = netr.forward_policy(&enc, &d.obs.a, n, true);
                 let p = softmax(&fp.logits, 1.0);
-                let mut dlog = vec![0f32; d.n];
-                for c in 0..d.n {
+                let mut dlog = vec![0f32; n];
+                for c in 0..n {
                     dlog[c] = pcoef * (p[c] - d.tgt[c]) / batch as f32;
                     if d.tgt[c] > 1e-8 { pl -= d.tgt[c] as f64 * (p[c].max(1e-8) as f64).ln(); }
                 }
-                let (v, vact) = netr.forward_value(&d.s, true);
-                let err = v - d.z;
+                let fv = netr.forward_value(&enc, true);
+                let err = fv.v - d.z;
                 vl += (d.vw * err * err) as f64 * batch as f64 / wsum as f64;
-                netr.backward(&mut g, &d.s, &d.a, d.n, &fp, &dlog, &vact, vcoef * 2.0 * err * d.vw / wsum);
+                let daux = if netr.uses_graph() { auxcoef * 2.0 * (fv.aux - d.z2) * d.vw / wsum } else { 0.0 };
+                netr.backward(&mut g, &d.obs, &enc, &fp, &dlog, &fv, vcoef * 2.0 * err * d.vw / wsum, daux);
             }
             (g, pl, vl)
         }).reduce_with(|mut a, b| { for (x, y) in a.0.iter_mut().zip(b.0.iter()) { *x += *y; } (a.0, a.1 + b.1, a.2 + b.2) }).unwrap();

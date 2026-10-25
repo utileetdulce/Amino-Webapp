@@ -215,3 +215,117 @@ pub fn candidate_matrix(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
     for (i, a) in acts.iter().enumerate() { action_features(s, ctx, *a, &mut m, i * AF); }
     m
 }
+
+// ---------- board graph for the graph network (see nn.rs) ----------
+/// One node per path component (cell, comp); edges follow open tile edges (the same walkable graph the ants use).
+pub const NF: usize = 20;
+
+#[derive(Clone, Default)]
+pub struct Graph {
+    pub n: usize,
+    pub x: Vec<f32>,            // n * NF node features (current player's view)
+    pub nbr: Vec<[i16; 3]>,     // neighbour node across tile edge 0/1/2 (-1: none)
+    pub base: Vec<u16>,         // first node of each cell slot (ncells + 1 entries)
+    pub ant: i32, pub foe: i32, // node of own ant / first enemy ant (-1: none)
+    pub cand: Vec<Vec<u16>>,    // per candidate action: nodes whose embedding describes the target (empty: none)
+}
+
+pub fn build_graph(s: &State, ctx: &Ctx) -> Graph {
+    let pi = ctx.pi;
+    let p = &s.players[pi];
+    let nc = s.ncells;
+    let mut base = vec![0u16; nc + 1];
+    for cid in 0..nc { base[cid + 1] = base[cid] + s.cells[cid].ncomps() as u16; }
+    let n = base[nc] as usize;
+    let mut x = vec![0f32; n * NF];
+    let mut nbr = vec![[-1i16; 3]; n];
+    let ant_cell = p.ant.map(|a| a.cell as usize);
+    let mut ant_node = -1i32;
+    if let Some(a) = &p.ant { ant_node = base[a.cell as usize] as i32 + s.cells[a.cell as usize].comp_index(a.edge as usize) as i32; }
+    let mut foe = -1i32;
+    let mut foe_cells: FV<u8, 6> = FV::new();
+    for q in 0..s.n { if q == pi { continue; } if let Some(a) = &s.players[q].ant { foe_cells.push(a.cell); if foe < 0 { foe = base[a.cell as usize] as i32 + s.cells[a.cell as usize].comp_index(a.edge as usize) as i32; } } }
+    let carry_val = if p.carry >= 0 { p.values[s.resources[p.carry as usize].kind as usize] as f32 / 3.0 } else { 0.0 };
+    for cid in 0..nc {
+        let c = &s.cells[cid];
+        let fr = ctx.free_res.iter().find(|r| r.cell as usize == cid).map_or(0.0, |r| r.val as f32 / 3.0);
+        let ca = ctx.carriers.iter().find(|r| r.cell as usize == cid).map_or(0.0, |r| r.val as f32 / 3.0);
+        let da = ctx.dist_ant[cid]; let dh = ctx.dist_hill[cid];
+        let foe_here = foe_cells.iter().any(|&f| f as usize == cid);
+        for ci in 0..c.ncomps() {
+            let node = base[cid] as usize + ci;
+            let mask = c.comp(ci);
+            let f = &mut x[node * NF..(node + 1) * NF];
+            f[0] = if is_up(c.x as i32, c.y as i32) { 1.0 } else { 0.0 };
+            for e in 0..3 { f[1 + e] = ((mask >> e) & 1) as f32; }
+            f[4] = c.ncomps() as f32 / 3.0;
+            f[5] = if c.hill == pi as i8 { 1.0 } else { 0.0 };
+            f[6] = if c.hill >= 0 && c.hill != pi as i8 { 1.0 } else { 0.0 };
+            f[7] = fr;
+            f[8] = if c.block >= 0 { 1.0 } else { 0.0 };
+            f[9] = if c.bridge > 0 { 1.0 } else { 0.0 };
+            f[10] = if node as i32 == ant_node { 1.0 } else { 0.0 };
+            f[11] = if ant_cell == Some(cid) { 1.0 } else { 0.0 };
+            f[12] = if foe_here { 1.0 } else { 0.0 };
+            f[13] = ca;
+            f[14] = if da >= 0 { mn(da as i32, 14) as f32 / 14.0 } else { 1.0 };
+            f[15] = if da >= 0 { 1.0 } else { 0.0 };
+            f[16] = if dh >= 0 { mn(dh as i32, 14) as f32 / 14.0 } else { 1.0 };
+            f[17] = if dh >= 0 { 1.0 } else { 0.0 };
+            f[18] = if c.overlaid { 1.0 } else { 0.0 };
+            f[19] = if ant_cell == Some(cid) { carry_val } else { 0.0 };
+            let mut k = 0;
+            for e in 0..3 {
+                if (mask >> e) & 1 == 0 { continue; }
+                let (nid, ne) = s.nb(cid, e);
+                if let Some(nid) = nid {
+                    let nc2 = &s.cells[nid];
+                    if nc2.open(ne) == 1 { nbr[node][e] = (base[nid] as usize + nc2.comp_index(ne)) as i16; k += 1; }
+                }
+            }
+            let _ = k;
+        }
+    }
+    Graph { n, x, nbr, base, ant: ant_node, foe, cand: Vec::new() }
+}
+
+fn cell_nodes(g: &Graph, s: &State, cid: usize, out: &mut Vec<u16>) {
+    if cid >= s.ncells { return; }
+    for k in g.base[cid]..g.base[cid + 1] { out.push(k); }
+}
+
+/// nodes describing the target of every candidate (average of their embeddings is fed to the policy head)
+pub fn attach_candidates(g: &mut Graph, s: &State, acts: &[Act]) {
+    g.cand.clear();
+    for a in acts {
+        let mut v: Vec<u16> = Vec::new();
+        match a.t {
+            A_MOVE | A_TMOVE | A_WINGS => {
+                let cid = a.a as usize / 3; let ci = a.a as usize % 3;
+                if cid < s.ncells { let k = ci.min(s.cells[cid].ncomps().saturating_sub(1)); v.push(g.base[cid] + k as u16); }
+            }
+            A_PLACE => {
+                let (x, y) = (gx(a.g as i32), gy(a.g as i32));
+                for e in 0..3 {
+                    let (nx, ny, ne) = neighbor(x, y, e);
+                    if let Some(ns) = s.slot_at(nx, ny) { if s.cells[ns].open(ne) == 1 { v.push(g.base[ns] + s.cells[ns].comp_index(ne) as u16); } }
+                }
+            }
+            A_BRIDGE => { cell_nodes(g, s, a.a as usize, &mut v); cell_nodes(g, s, a.b as usize, &mut v); }
+            A_BLOCKAGE | A_OVERLAY | A_INC_HILL => cell_nodes(g, s, a.a as usize, &mut v),
+            _ => {}
+        }
+        g.cand.push(v);
+    }
+}
+
+/// Everything the network needs for one decision.
+pub struct Obs { pub s: [f32; SF], pub a: Vec<f32>, pub n: usize, pub g: Option<Graph> }
+
+pub fn make_obs(s: &State, ctx: &Ctx, acts: &[Act], graph: bool) -> Obs {
+    let mut sf = [0f32; SF];
+    state_features(s, ctx, &mut sf);
+    let a = candidate_matrix(s, ctx, acts);
+    let g = if graph { let mut g = build_graph(s, ctx); attach_candidates(&mut g, s, acts); Some(g) } else { None };
+    Obs { s: sf, a, n: acts.len(), g }
+}

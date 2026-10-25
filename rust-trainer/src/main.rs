@@ -28,7 +28,7 @@ fn argf(k: &str, d: f64) -> f64 { arg(k).and_then(|v| v.parse().ok()).unwrap_or(
 fn load_net(path: &str) -> (Net, Value) {
     let j: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("read model")).expect("parse model");
     let a = &j["net"]["arch"];
-    let arch = Arch { h1: a["h1"].as_u64().unwrap() as usize, h2: a["h2"].as_u64().unwrap() as usize, hv: a["hv"].as_u64().unwrap() as usize };
+    let arch = Arch { h1: a["h1"].as_u64().unwrap() as usize, h2: a["h2"].as_u64().unwrap() as usize, hv: a["hv"].as_u64().unwrap() as usize, hg: a["hg"].as_u64().unwrap_or(0) as usize, gl: a["gl"].as_u64().unwrap_or(0) as usize };
     let theta: Vec<f32> = j["net"]["theta"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
     (Net::from_theta(arch, theta), j)
 }
@@ -65,8 +65,8 @@ fn fmt6(x: f32) -> String {
 
 fn save(path: &str, net: &Net, sims: usize, games: u64, iter: u64, history: &[Value], meta: &Value) {
     let mut s = String::with_capacity(net.theta.len() * 10 + 1024);
-    s.push_str(&format!("{{\"version\":3,\"name\":{},\"kind\":\"mcts\",\"sims\":{},\"games\":{},\"iter\":{},\"history\":{},\"meta\":{},\"net\":{{\"arch\":{{\"h1\":{},\"h2\":{},\"hv\":{}}},\"theta\":[",
-        serde_json::to_string(&meta["name"]).unwrap(), sims, games, iter, serde_json::to_string(history).unwrap(), serde_json::to_string(meta).unwrap(), net.arch.h1, net.arch.h2, net.arch.hv));
+    s.push_str(&format!("{{\"version\":3,\"name\":{},\"kind\":\"mcts\",\"sims\":{},\"games\":{},\"iter\":{},\"history\":{},\"meta\":{},\"net\":{{\"arch\":{{\"h1\":{},\"h2\":{},\"hv\":{}{}}},\"theta\":[",
+        serde_json::to_string(&meta["name"]).unwrap(), sims, games, iter, serde_json::to_string(history).unwrap(), serde_json::to_string(meta).unwrap(), net.arch.h1, net.arch.h2, net.arch.hv, if net.arch.hg > 0 { format!(",\"hg\":{},\"gl\":{}", net.arch.hg, net.arch.gl) } else { String::new() }));
     for (i, x) in net.theta.iter().enumerate() { if i > 0 { s.push(','); } s.push_str(&fmt6(*x)); }
     s.push_str("]}}");
     let tmp = format!("{}.tmp", path);
@@ -121,13 +121,12 @@ fn xcheck(path: &str, n: i32) {
             if acts.len() == 1 { a = acts[0]; } else {
                 a = heuristic_act(&s, 0.0, &mut rng);
                 let ctx = build_ctx(&s, pi);
-                let mut sf = [0f32; SF];
-                state_features(&s, &ctx, &mut sf);
-                let m = candidate_matrix(&s, &ctx, &acts);
-                sfs += sf.iter().map(|x| *x as f64).sum::<f64>();
-                asum += m.iter().map(|x| *x as f64).sum::<f64>();
-                lsum += net.forward_policy(&sf, &m, acts.len(), false).logits.iter().map(|x| *x as f64).sum::<f64>();
-                vsum += net.forward_value(&sf, false).0 as f64;
+                let o = make_obs(&s, &ctx, &acts, net.uses_graph());
+                let e = net.encode(&o, false);
+                sfs += o.s.iter().map(|x| *x as f64).sum::<f64>();
+                asum += o.a.iter().map(|x| *x as f64).sum::<f64>();
+                lsum += net.forward_policy(&e, &o.a, o.n, false).logits.iter().map(|x| *x as f64).sum::<f64>();
+                vsum += net.forward_value(&e, false).v as f64;
             }
             h = h.wrapping_mul(31).wrapping_add((acts.len() * 7) as u32 + a.t as u32);
             steps += 1;
@@ -232,8 +231,8 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
             let pi = s.actor();
             let la = s.legal_actions();
             if la.len() == 1 { s.apply(la[0]); continue; }
-            let ctx = build_ctx(&s, pi); let mut sf = [0f32; SF]; state_features(&s, &ctx, &mut sf);
-            let v = net.forward_value(&sf, false).0 as f64;
+            let ctx = build_ctx(&s, pi);
+            let v = net.value(&make_obs(&s, &ctx, &[], net.uses_graph())) as f64;
             if let Some((pa, pv, was_end, pt)) = prev { let vv = if pa == pi { v } else { -v }; dty[pt] += vv - pv; dtn[pt] += 1.0; if was_end { td[2] += vv - pv; td[3] += 1.0; } else { td[0] += vv - pv; td[1] += 1.0; } }
             let r = m.search(&s, sims, true, &mut rng);
             let mut l: Vec<f64> = r.prior.iter().zip(r.q.iter()).map(|(&p, &q)| (p.max(1e-8) as f64).ln() + qbeta * (q as f64 - r.value)).collect();
@@ -284,8 +283,182 @@ fn diag(path: &str, sims: usize, games: usize, qbeta: f64) {
     println!("  value drift per step (should be ~0): after a non-end action {:+.4} (n {})   after 'end' {:+.4} (n {})", t.tdn / t.tdnn.max(1.0), t.tdnn, t.tde / t.tden.max(1.0), t.tden);
 }
 
+/// `gradcheck`: compares the hand-written backward pass with finite differences on a random graph net
+fn gradcheck() {
+    let mut rng = Rng::new(7);
+    let arch = Arch { h1: 12, h2: 8, hv: 10, hg: 6, gl: 2 };
+    let mut net = Net::random(arch, &mut rng);
+    for x in net.theta.iter_mut() { *x += (rng.f64() as f32 - 0.5) * 0.1; } // make zero-initialised parts non-trivial
+    let mut obs: Vec<(Obs, Vec<f32>, f32, f32)> = Vec::new();
+    for g in 0..4 {
+        let mut s = engine::new_game(2, 100 + g);
+        for step in 0..(30 + g * 25) {
+            let acts = s.legal_actions();
+            if s.over { break; }
+            let a = if acts.len() > 1 && step % 3 != 0 { heuristic_act(&s, 4.0, &mut rng) } else { acts[0] };
+            s.apply(a);
+        }
+        let pi = s.actor(); let acts = s.legal_actions();
+        if acts.len() < 2 { continue; }
+        let ctx = build_ctx(&s, pi);
+        let o = make_obs(&s, &ctx, &acts, true);
+        let mut t: Vec<f32> = (0..acts.len()).map(|_| rng.f64() as f32).collect(); let z: f32 = t.iter().sum(); for x in t.iter_mut() { *x /= z; }
+        println!("sample {}: {} nodes, {} candidates", g, o.g.as_ref().unwrap().n, acts.len());
+        obs.push((o, t, 0.3 - 0.2 * g as f32, 0.1 * g as f32));
+    }
+    let loss = |net: &Net| -> f64 {
+        let mut l = 0f64;
+        for (o, t, z, z2) in &obs {
+            let e = net.encode(o, false); let fp = net.forward_policy(&e, &o.a, o.n, false); let p = nn::softmax(&fp.logits, 1.0);
+            for c in 0..o.n { l -= t[c] as f64 * (p[c].max(1e-12) as f64).ln(); }
+            let fv = net.forward_value(&e, false);
+            l += ((fv.v - z) as f64).powi(2) + 0.5 * ((fv.aux - z2) as f64).powi(2);
+        }
+        l
+    };
+    let mut grad = vec![0f32; net.size()];
+    for (o, t, z, z2) in &obs {
+        let e = net.encode(o, true); let fp = net.forward_policy(&e, &o.a, o.n, true); let p = nn::softmax(&fp.logits, 1.0);
+        let dlog: Vec<f32> = (0..o.n).map(|c| p[c] - t[c]).collect();
+        let fv = net.forward_value(&e, true);
+        net.backward(&mut grad, o, &e, &fp, &dlog, &fv, 2.0 * (fv.v - z), 0.5 * 2.0 * (fv.aux - z2));
+    }
+    let (mut maxrel, mut checked) = (0f64, 0);
+    let eps = 3e-3f32;
+    let gmax = grad.iter().fold(0f64, |m, &x| m.max(x.abs() as f64));
+    for i in (0..net.size()).step_by(7) {
+        let mut a = net.clone(); a.theta[i] += eps; let mut b = net.clone(); b.theta[i] -= eps;
+        let num = (loss(&a) - loss(&b)) / (2.0 * eps as f64);
+        let an = grad[i] as f64;
+        let rel = (num - an).abs() / gmax;
+        if rel > maxrel { maxrel = rel; }
+        if rel > 0.02 { println!("  param {} analytic {:.5} numeric {:.5}", i, an, num); }
+        checked += 1;
+    }
+    println!("gradcheck: {} parameters checked, max |analytic-numeric| / max|grad| = {:.4} (max |grad| {:.3})", checked, maxrel, gmax);
+}
+
+/// `abtest <teacher.json> <games> <sims> <rounds> [lr] [hg,gl]`: does the board graph carry information the plain MLP lacks?
+/// Generates teacher self-play data once, then trains (a) the teacher's MLP and (b) the same MLP grown by a graph network on it
+/// (function-preserving start), and prints held-out policy cross-entropy / top-1 agreement / value MSE after every round.
+fn abtest(teacher: &str, games: usize, sims: usize, rounds: usize, lr: f64, hg: usize, gl: usize) {
+    let (tnet, _) = load_net(teacher);
+    let cfg = SpCfg { sims, tau_moves: 30, dirichlet: 0.25, depth: 18, qbeta: argf("qbeta", 0.0), ttemp: 1.0, vbalance: false, vtd: 1.0, draw_z: 0.0, graph: true };
+    let t0 = Instant::now();
+    let outs: Vec<GameOut> = (0..games).into_par_iter().map(|g| {
+        let mut r = Rng::new(0xABCD ^ (g as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15));
+        self_play_game(&tnet, cfg, g % 10 < 3, &mut r)
+    }).collect();
+    let split = games * 9 / 10;
+    let vraw = std::env::var("VRAW").is_ok();
+    let pcoef_ab = std::env::var("PCOEF").ok().and_then(|x| x.parse().ok()).unwrap_or(1.0f32);
+    let (mut train, mut hold): (Vec<Sample>, Vec<Sample>) = (Vec::new(), Vec::new());
+    for (i, mut o) in outs.into_iter().enumerate() { if vraw { for x in o.samples.iter_mut() { x.z = x.zr; } } if i < split { train.extend(o.samples) } else { hold.extend(o.samples) } }
+    println!("data: {} train / {} held-out samples in {:.0}s", train.len(), hold.len(), t0.elapsed().as_secs_f64());
+    let mut rng = Rng::new(5);
+    let mut nets: Vec<(&str, Net)> = if std::env::var("SCRATCH").is_ok() {
+        vec![("mlp", Net::random(DEFAULT_ARCH, &mut rng)), ("graph", Net::random(Arch { hg, gl, ..DEFAULT_ARCH }, &mut rng))]
+    } else { vec![("mlp", tnet.clone()), ("graph", Net::grow_from(&tnet, hg, gl, &mut rng))] };
+    println!("params: mlp {}  graph {}", nets[0].1.size(), nets[1].1.size());
+    let holdout = |net: &Net| -> (f64, f64, f64, f64) {
+        let r: Vec<(f64, f64, f64, f64)> = hold.par_iter().map(|d| {
+            let e = net.encode(&d.obs, false);
+            let fp = net.forward_policy(&e, &d.obs.a, d.obs.n, false);
+            let p = nn::softmax(&fp.logits, 1.0);
+            let mut ce = 0f64; for c in 0..d.obs.n { if d.tgt[c] > 1e-8 { ce -= d.tgt[c] as f64 * (p[c].max(1e-8) as f64).ln(); } }
+            let am = |v: &[f32]| (0..v.len()).max_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap()).unwrap();
+            let top1 = if am(&p) == am(&d.tgt) { 1.0 } else { 0.0 };
+            let fv = net.forward_value(&e, false);
+            (ce, top1, ((fv.v - d.z) as f64).powi(2), 1.0)
+        }).collect();
+        let n = r.len() as f64;
+        (r.iter().map(|x| x.0).sum::<f64>() / n, r.iter().map(|x| x.1).sum::<f64>() / n, r.iter().map(|x| x.2).sum::<f64>() / n, n)
+    };
+    for (name, net) in nets.iter() { let h = holdout(net); println!("{:<6} round 0: policy CE {:.4}  top1 {:.3}  value MSE {:.4}", name, h.0, h.1, h.2); }
+    let steps = argf("steps", 400.0) as usize;
+    for round in 1..=rounds {
+        for (name, net) in nets.iter_mut() {
+            let t = Instant::now();
+            let (pl, vl) = az_update(net, &train, steps, 128, lr, pcoef_ab, 1.0, 0.5, &mut rng);
+            let h = holdout(net);
+            println!("{:<6} round {}: train ploss {:.4} vloss {:.4} | held-out policy CE {:.4}  top1 {:.3}  value MSE {:.4}   ({:.0}s)", name, round, pl, vl, h.0, h.1, h.2, t.elapsed().as_secs_f64());
+        }
+    }
+    let _ = nets.iter().map(|(n, net)| save(&format!("/tmp/abtest-{}.json", n), net, sims, 0, 0, &[], &json!({"name": n}))).count();
+}
+
+/// `vtest <teacher.json> <games> <K> <rounds> [lr] [hg,gl]`: value learning from low-noise labels.
+/// Label of a turn-start position = mean outcome of K noisy heuristic-vs-heuristic playouts (hidden information re-dealt every time),
+/// so a label is ~sqrt(K) less noisy than a single game result. Trains a fresh MLP and a fresh graph net on them and reports
+/// held-out MSE against the labels (plus the teacher's value head, which was trained on game outcomes, as a reference).
+fn vtest(teacher: &str, games: usize, k: usize, rounds: usize, lr: f64, hg: usize, gl: usize) {
+    let (tnet, _) = load_net(teacher);
+    let t0 = Instant::now();
+    let outs: Vec<Vec<Sample>> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(0x5151 ^ (g as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15));
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        let mut out: Vec<Sample> = Vec::new();
+        let mut guard = 0;
+        let search = mcts::Mcts::new(&tnet, 32, 18, 0.25);
+        let heur_seat = if g % 3 == 0 { rng.below(2) as i32 } else { -1 };
+        while !s.over && guard < 3000 {
+            guard += 1;
+            let pi = s.actor();
+            let acts = s.legal_actions();
+            if acts.len() == 1 { s.apply(acts[0]); continue; }
+            if s.actions_this_turn == 0 && s.pending.is_none() && rng.f64() < 0.35 {
+                let mut tot = 0f64;
+                for _ in 0..k {
+                    let mut r = s;
+                    mcts::determinize(&mut r, pi, &mut rng);
+                    let mut gg = 0;
+                    while !r.over && gg < 3000 { gg += 1; let a = heuristic_act(&r, 4.0, &mut rng); r.apply(a); }
+                    tot += if !r.over || r.winner < 0 { 0.0 } else if r.winner as usize == pi { 1.0 } else { -1.0 };
+                }
+                let ctx = build_ctx(&s, pi);
+                let obs = make_obs(&s, &ctx, &[], true);
+                out.push(Sample { obs, tgt: Vec::new(), z: (tot / k as f64) as f32, z2: 0.0, zr: 0.0, vw: 1.0 });
+            }
+            let a = if pi as i32 == heur_seat { heuristic_act(&s, 4.0, &mut rng) } else {
+                let r = search.search(&s, 32, true, &mut rng);
+                r.acts[mcts::pick_by_visits(&r.visits, if s.turn_no < 20 { 1.0 } else { 0.1 }, &mut rng)]
+            };
+            s.apply(a);
+        }
+        out
+    }).collect();
+    let split = games * 9 / 10;
+    let (mut train, mut hold): (Vec<Sample>, Vec<Sample>) = (Vec::new(), Vec::new());
+    for (i, o) in outs.into_iter().enumerate() { if i < split { train.extend(o) } else { hold.extend(o) } }
+    println!("labels: {} train / {} held-out in {:.0}s", train.len(), hold.len(), t0.elapsed().as_secs_f64());
+    let var0 = hold.iter().map(|d| (d.z as f64).powi(2)).sum::<f64>() / hold.len() as f64;
+    let mse = |net: &Net| -> f64 { hold.par_iter().map(|d| ((net.value(&d.obs) - d.z) as f64).powi(2)).sum::<f64>() / hold.len() as f64 };
+    println!("label variance (MSE of predicting 0): {:.4}   teacher value head: MSE {:.4}", var0, mse(&tnet));
+    let mut rng = Rng::new(9);
+    let mut nets: Vec<(&str, Net)> = vec![("mlp", Net::random(DEFAULT_ARCH, &mut rng)), ("graph", Net::random(Arch { hg, gl, ..DEFAULT_ARCH }, &mut rng))];
+    let steps = argf("steps", 400.0) as usize;
+    for round in 1..=rounds {
+        for (name, net) in nets.iter_mut() {
+            let (_, vl) = az_update(net, &train, steps, 128, lr, 0.0, 1.0, 0.0, &mut rng);
+            if round % 5 == 0 || round == rounds { println!("{:<6} round {:>3}: train MSE {:.4}  held-out MSE {:.4}  (R2 {:.3})", name, round, vl, mse(net), 1.0 - mse(net) / var0); }
+        }
+    }
+    for (n, net) in nets.iter() { save(&format!("/tmp/vtest-{}.json", n), net, 0, 0, 0, &[], &json!({"name": n})); }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(|s| s.as_str()) == Some("abtest") {
+        let n = |i: usize, d: f64| argv.get(i).map_or(d, |x| x.parse().unwrap());
+        let (hg, gl) = argv.get(7).map_or((16, 3), |x| { let v: Vec<usize> = x.split(',').map(|y| y.parse().unwrap()).collect(); (v[0], v[1]) });
+        abtest(&argv[2], n(3, 1000.0) as usize, n(4, 128.0) as usize, n(5, 10.0) as usize, n(6, 3e-4), hg, gl); return;
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("vtest") {
+        let n = |i: usize, d: f64| argv.get(i).map_or(d, |x| x.parse().unwrap());
+        let (hg, gl) = argv.get(7).map_or((16, 3), |x| { let v: Vec<usize> = x.split(',').map(|y| y.parse().unwrap()).collect(); (v[0], v[1]) });
+        vtest(&argv[2], n(3, 600.0) as usize, n(4, 8.0) as usize, n(5, 30.0) as usize, n(6, 1e-3), hg, gl); return;
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("gradcheck") { gradcheck(); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("xcheck") { xcheck(&argv[2], argv[3].parse().unwrap()); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("diag") { diag(&argv[2], argv[3].parse().unwrap(), argv[4].parse().unwrap(), argv.get(5).map_or(3.0, |x| x.parse().unwrap())); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("trace") { trace(&argv[2], argv[3].parse().unwrap()); return; }
@@ -297,6 +470,7 @@ fn main() {
     let games = argf("games", 24.0) as usize;
     let steps = argf("steps", 150.0) as usize; // upper bound of minibatches per iteration
     let pcoef = argf("pcoef", 1.0) as f32; let vcoef = argf("vcoef", 1.0) as f32; // loss weights (0 freezes that head)
+    let auxcoef = argf("auxcoef", 0.5) as f32; // weight of the auxiliary score-margin head (graph nets only)
     let gate_every = argf("gate-every", 20.0) as u64; // champion gating: every N iterations play current vs champion (0 = off)
     let gate_games = argf("gate-games", 200.0) as usize;
     let gate_sims = argf("gate-sims", 64.0) as usize; // gating plays with search (so value-head gains count); 0 = raw policy
@@ -346,6 +520,10 @@ fn main() {
         }
         _ => { println!("init: random network (consider warm-starting with tools/train-cli.mjs first)"); Net::random(DEFAULT_ARCH, &mut rng) }
     };
+    if let Some(spec) = arg("grow-graph") {
+        let v: Vec<usize> = spec.split(',').map(|x| x.parse().unwrap()).collect();
+        if net.arch.hg == 0 { net = Net::grow_from(&net, v[0], v[1], &mut rng); println!("grown to graph net hg={} gl={} ({} params)", v[0], v[1], net.size()); }
+    }
     if lr > 1.0e-4 { println!("WARNING: lr {} is high - in our tests runs with lr >= 1e-4 drifted and ended up weaker than the start model (use <= 5e-5 and gating).", lr); }
     println!("config {}", json!({"workers": workers, "sims": sims, "games": games, "steps": steps, "batch": batch, "lr": lr, "buffer": buffer_cap,
         "evalEvery": eval_every, "evalGames": eval_games, "oppMix": opp_mix, "depth": depth, "minutes": minutes, "iters": iters, "tauMoves": tau_moves, "seed": seed}));
@@ -365,7 +543,7 @@ fn main() {
     let mut buffer: Vec<Sample> = Vec::new();
     let mut best = -1.0f64;
     let mut champion = net.clone(); let mut champ_iter = iter0;
-    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0), vbalance: argf("vbalance", 0.0) != 0.0, vtd: argf("vtd", 1.0), draw_z: argf("draw-z", 0.0) as f32 };
+    let cfg = SpCfg { sims, tau_moves, dirichlet: 0.25, depth, qbeta: argf("qbeta", 3.0), ttemp: argf("ttemp", 1.0), vbalance: argf("vbalance", 0.0) != 0.0, vtd: argf("vtd", 1.0), draw_z: argf("draw-z", 0.0) as f32, graph: false };
     for _ in 0..iters {
         if minutes > 0.0 && t0.elapsed().as_secs_f64() / 60.0 > minutes { break; }
         let t1 = Instant::now();
@@ -391,7 +569,7 @@ fn main() {
         let t_play = t1.elapsed().as_secs_f64();
         let t2 = Instant::now();
         let steps_eff = if buffer.len() < min_buffer { 0 } else { (((new_samples as f64 * ratio) / batch as f64).ceil() as usize).clamp(1, steps) };
-        let (ploss, vloss) = if steps_eff > 0 { az_update(&mut net, &buffer, steps_eff, batch, lr, pcoef, vcoef, &mut rng) } else { (0.0, 0.0) };
+        let (ploss, vloss) = if steps_eff > 0 { az_update(&mut net, &buffer, steps_eff, batch, lr, pcoef, vcoef, auxcoef, &mut rng) } else { (0.0, 0.0) };
         let t_train = t2.elapsed().as_secs_f64();
         games_total += n_games; iter0 += 1;
         println!("iter {} games {} buf {} steps {} turns/game {:.0} play {:.0}s train {:.1}s  ploss {:.3} vloss {:.3}  vsHeur(self-play seats) {}-{}-{}",

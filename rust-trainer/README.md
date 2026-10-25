@@ -19,6 +19,12 @@ outcome, mid-turn decisions learn the value at the start of the next turn; fixes
 made MCTS favour ending turns), `--vbalance 1` (weight value loss per player-game; tested, not helpful), `--gate-sims 64`
 (gating plays with search; 0 = raw policy), `--qbeta`, `--topk`, `--cpuct`, `--pcoef/--vcoef`, `--gate-every/-games/-win/-revert`.
 
+Graph net / experiments: `--grow-graph H,L` (grow a plain MLP into a graph net with identical outputs; GNN width H, L layers), `--auxcoef`
+(aux score-margin head), `--sp-champion 1` (self-play data from the frozen champion), `--roll N --roll-w W` (heuristic-rollout leaf
+evaluation; bench option `roll=N:rw=W`), `--draw-z`, `--type-div`, `--chance-leaf`. `amino-train bench` also prints the mean score margin.
+Experiments: `gradcheck` (backward vs finite differences), `abtest <teacher> <games> <sims> <rounds> [lr] [hg,gl]` (does the board graph carry
+information the MLP lacks? env `VRAW`, `SCRATCH`, `PCOEF`), `vtest` (value learning from rollout-averaged labels).
+
 ## Diagnostics
 ```sh
 B=./target/aarch64-apple-darwin/release/amino-train

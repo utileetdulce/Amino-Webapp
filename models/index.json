@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-24T21:37:45.936Z",
+ "updated": "2026-10-25T21:46:06.797Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -248,7 +248,7 @@
    "iter": 186,
    "note": "Policy identisch mit „AZ kurz“, Value-Kopf 5 Minuten mit zugkonsistenten Zielen (--vtd) nachtrainiert: Sprung nach „Ende“ +0,38 → +0,03. Mit Suche 60 % im Direktvergleich gegen „AZ kurz“ (600 Partien), 83 % gegen die Heuristik. Netz allein unverändert.",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": null,
    "rawRate": null,
    "randomRate": null
@@ -305,6 +305,24 @@
    "default": false,
    "heuristicRate": 0.65625,
    "rawRate": 0.4375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-g4.json",
+   "id": "m-1a174dcef02-ee00",
+   "name": "Graph-Netz (Brett-GNN)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-25T20:59:58.000Z",
+   "updatedAt": "2026-10-25T21:40:03.000Z",
+   "rulesVersion": 5,
+   "games": 9264,
+   "iter": 193,
+   "note": "Graph-Netz über die Wegekomponenten des Bretts, aus „AZ kurz + zugkonsistenter Value“ funktionsgleich gewachsen und ~90 Min. (9.300 Spiele) mit Selbstspiel weitertrainiert (Hilfs-Kopf Punktedifferenz). Mit Suche 63 % (±5) im Direktvergleich gegen den Vorgänger az-vtd (400 Partien, Punktedifferenz +1,19 ±0,35).",
+   "status": "",
+   "default": true,
+   "heuristicRate": null,
+   "rawRate": null,
    "randomRate": null
   },
   {

@@ -241,6 +241,7 @@ export class TrainUI {
     this.loadObj(obj, this.modelList.find((m) => m.key === key)?.name || obj.name || 'Modell');
   }
   loadObj(obj, nme) {
+    if (obj.net?.arch?.hg > 0) { this.status.textContent = `Modell „${nme}“ ist ein Graph-Netz: Es lässt sich im Spiel nutzen, im Browser aber nicht weitertrainieren (dafür gibt es den Rust-Trainer, siehe README).`; return; }
     for (const c of [this.chWin, this.chRet, this.chEnt, this.chLoss]) c.clear();
     for (const h of obj.history || []) { this.chWin.add('vs Zufall', h.games, h.random); this.chWin.add('vs Heuristik', h.games, h.heuristic); }
     this.chWin.draw();

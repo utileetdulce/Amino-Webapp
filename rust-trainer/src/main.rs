@@ -164,18 +164,21 @@ fn bench(games: usize, sa: &str, sb: &str) {
     for spec in [sa, sb] { let p: Vec<&str> = spec.split(':').collect(); if p.len() > 1 && !nets.contains_key(p[1]) { nets.insert(p[1].to_string(), load_net(p[1]).0); } }
     let t0 = Instant::now();
     let base = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
-    let res: Vec<(i32, i32)> = (0..games).into_par_iter().map(|g| {
+    let res: Vec<(i32, i32, i32)> = (0..games).into_par_iter().map(|g| {
         let mut rng = Rng::new(base ^ (g as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15));
         let seat = g % 2;
         let (a, b) = (parse_agent(sa, &nets), parse_agent(sb, &nets));
         let ag = if seat == 0 { [a, b] } else { [b, a] };
-        let (w, turns) = play_game_turns(&ag, &mut rng);
-        (if w < 0 { 0 } else if w as usize == seat { 1 } else { -1 }, turns)
+        let (w, turns, s0, s1) = play_game_scores(&ag, &mut rng);
+        let margin = if seat == 0 { s0 - s1 } else { s1 - s0 };
+        (if w < 0 { 0 } else if w as usize == seat { 1 } else { -1 }, turns, margin)
     }).collect();
+    let mm = res.iter().map(|r| r.2 as f64).sum::<f64>() / games as f64;
+    let msd = (res.iter().map(|r| (r.2 as f64 - mm).powi(2)).sum::<f64>() / games as f64).sqrt();
     let (w, d, l) = (res.iter().filter(|r| r.0 == 1).count(), res.iter().filter(|r| r.0 == 0).count(), res.iter().filter(|r| r.0 == -1).count());
     let rate = (w as f64 + 0.5 * d as f64) / games as f64;
     let se = (rate * (1.0 - rate) / games as f64).sqrt();
-    println!("{:<44} vs {:<34} {:>5.1}% ±{:.1}  ({}-{}-{})  turns {:.0}  {:.0}s", sa, sb, rate * 100.0, 196.0 * se, w, d, l,
+    println!("{:<44} vs {:<34} {:>5.1}% ±{:.1}  ({}-{}-{})  margin {:+.2} ±{:.2}  turns {:.0}  {:.0}s", sa, sb, rate * 100.0, 196.0 * se, w, d, l, mm, 1.96 * msd / (games as f64).sqrt(),
         res.iter().map(|r| r.1 as f64).sum::<f64>() / games as f64, t0.elapsed().as_secs_f64());
 }
 

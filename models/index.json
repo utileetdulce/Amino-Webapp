@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25T22:33:56.003Z",
+ "updated": "2026-10-25T22:34:07.214Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -336,7 +336,7 @@
    "rulesVersion": 5,
    "games": 19536,
    "iter": 407,
-   "note": "Fortsetzung von graph-g4: weitere 45 Min. Selbstspiel (14.600 Spiele insgesamt, ~135 Min.). Mit Suche 67 % (±5) gegen az-vtd (400 Partien, Punktedifferenz +1,57 ±0,37); gegen graph-g4 98 % Remis (Patt), also kein messbarer Unterschied zum Vorgänger.",
+   "note": "Fortsetzung von graph-g4: weitere 45 Min. Selbstspiel (19.500 Spiele insgesamt seit dem Start aus az-vtd, ~135 Min.). Mit Suche 67 % (±5) gegen az-vtd (400 Partien, Punktedifferenz +1,57 ±0,37); gegen graph-g4 98 % Remis (Patt), also kein messbarer Unterschied zum Vorgänger.",
    "status": "",
    "default": true,
    "heuristicRate": null,

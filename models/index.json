@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25T21:46:06.797Z",
+ "updated": "2026-10-25T22:33:56.003Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -310,7 +310,7 @@
   {
    "file": "graph-g4.json",
    "id": "m-1a174dcef02-ee00",
-   "name": "Graph-Netz (Brett-GNN)",
+   "name": "Graph-Netz (Brett-GNN) v1",
    "kind": "az",
    "trainer": "rust",
    "createdAt": "2026-10-25T20:59:58.000Z",
@@ -319,6 +319,24 @@
    "games": 9264,
    "iter": 193,
    "note": "Graph-Netz über die Wegekomponenten des Bretts, aus „AZ kurz + zugkonsistenter Value“ funktionsgleich gewachsen und ~90 Min. (9.300 Spiele) mit Selbstspiel weitertrainiert (Hilfs-Kopf Punktedifferenz). Mit Suche 63 % (±5) im Direktvergleich gegen den Vorgänger az-vtd (400 Partien, Punktedifferenz +1,19 ±0,35).",
+   "status": "",
+   "default": false,
+   "heuristicRate": null,
+   "rawRate": null,
+   "randomRate": null
+  },
+  {
+   "file": "graph-g5.json",
+   "id": "m-1a175070c76-6600",
+   "name": "Graph-Netz (Brett-GNN) v2",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-25T21:45:58.000Z",
+   "updatedAt": "2026-10-25T22:31:07.000Z",
+   "rulesVersion": 5,
+   "games": 19536,
+   "iter": 407,
+   "note": "Fortsetzung von graph-g4: weitere 45 Min. Selbstspiel (14.600 Spiele insgesamt, ~135 Min.). Mit Suche 67 % (±5) gegen az-vtd (400 Partien, Punktedifferenz +1,57 ±0,37); gegen graph-g4 98 % Remis (Patt), also kein messbarer Unterschied zum Vorgänger.",
    "status": "",
    "default": true,
    "heuristicRate": null,

@@ -170,6 +170,7 @@ fn bench(games: usize, sa: &str, sb: &str) {
         let (a, b) = (parse_agent(sa, &nets), parse_agent(sb, &nets));
         let ag = if seat == 0 { [a, b] } else { [b, a] };
         let (w, turns, s0, s1) = play_game_scores(&ag, &mut rng);
+        if std::env::var("BENCH_SCORES").is_ok() { println!("game {} seat {} scores {}-{} turns {}", g, seat, s0, s1, turns); }
         let margin = if seat == 0 { s0 - s1 } else { s1 - s0 };
         (if w < 0 { 0 } else if w as usize == seat { 1 } else { -1 }, turns, margin)
     }).collect();

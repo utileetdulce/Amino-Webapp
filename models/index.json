@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-26T14:42:10.555Z",
+ "updated": "2026-10-26T15:06:44.843Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -338,7 +338,7 @@
    "iter": 518,
    "note": "graph-h1 + 60 Minuten Selbstspiel mit --draw-z -1 und --tau-moves 400 (24.900 Spiele): kein Stillstand mehr (Selbstspiel 78 % entschieden statt 2 %), 63 % (±5) im Direktvergleich gegen graph-h1 bei 7 % Remis, 75 % gegen az-vtd, 97 % gegen die Heuristik (+5,95 Punkte).",
    "status": "",
-   "default": false,
+   "default": true,
    "heuristicRate": 0.8125,
    "rawRate": 0.78125,
    "randomRate": null
@@ -392,7 +392,7 @@
    "iter": 596,
    "note": "Graph-Netz v2 aus graph-g5 funktionsgleich um Merkmale erweitert (Reichweite und Hügel-Entfernung des Gegners, zusammenhängende Wegbereiche, offene Ränder, Gegner-Hand/-Karten, Wirkung einer Platzierung auf Verbindungen, Würfelchancen beim Transport) und 45 Min. weitertrainiert (Feature-Version 2). Mit Suche 71 % (±5) gegen az-vtd (Vorgänger graph-g5: 67 %), Punktedifferenz gegen die Heuristik +5,35 statt +4,75; gegen graph-g5 selbst 98 % Remis.",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": null,
    "rawRate": null,
    "randomRate": null

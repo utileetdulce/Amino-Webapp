@@ -90,7 +90,7 @@ impl<'a> Mcts<'a> {
             roll_turns: ROLL_TURNS.load(Ordering::Relaxed), roll_w: ROLL_W_MILLI.load(Ordering::Relaxed) as f64 / 1000.0, topk: TOPK.load(Ordering::Relaxed), value_zero: false, determinize: true, type_div: TYPEDIV.load(Ordering::Relaxed) != 0, chance_leaf: CHANCELEAF.load(Ordering::Relaxed) != 0 }
     }
 
-    fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
+    pub fn evaluate(&self, s: &State, acts: &[Act], want_priors: bool) -> (f32, Vec<f32>) {
         let ctx = build_ctx(s, s.actor());
         let o = make_obs(s, &ctx, if want_priors { acts } else { &[] }, self.net.gver());
         let e = self.net.encode(&o, false);

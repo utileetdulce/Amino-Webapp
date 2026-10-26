@@ -488,6 +488,75 @@ fn stall(games: usize, sa: &str, sb: &str) {
     if std::env::var("STALL_ALL").is_ok() { for r in &res { println!("{}", r); } }
 }
 
+/// `probe <model> <sims> <games> <round>`: self-play (MCTS) up to `round`, then at the next turn start of a game that is still 0-0
+/// with nothing on the board, print every candidate: prior, visits, Q, and the value net right after it (mover's view).
+fn probe(path: &str, sims: usize, games: usize, round: i32) {
+    let (net, _) = load_net(path);
+    let m = mcts::Mcts::new(&net, sims, 18, 0.0);
+    let mut shown = 0;
+    for g in 0..games {
+        let mut rng = Rng::new(4242 + g as u64);
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        let mut guard = 0;
+        while !s.over && guard < 20000 && !(s.turn_no / 2 >= round && s.actions_this_turn == 0 && s.pending.is_none()) {
+            guard += 1;
+            let la = s.legal_actions();
+            let a = if la.len() == 1 { la[0] } else { let r = m.search(&s, sims, false, &mut rng); r.acts[mcts::pick_by_visits(&r.visits, 0.0, &mut rng)] };
+            s.apply(a);
+        }
+        if s.over || s.resources.len() > 0 { continue; }
+        let pi = s.actor();
+        let p = &s.players[pi];
+        let (v0, _) = m.evaluate(&s, &[], false);
+        println!("game {} round {} player {}: hand {} cards {} hills_in_hand {} ant {} | tiles left {} | v(now) {:+.3}", g, s.turn_no / 2, pi, p.hand.len(), p.cards.len(), p.hills_in_hand, p.ant.is_some(), s.tile_stack.len(), v0);
+        let r = m.search(&s, sims, false, &mut rng);
+        for (i, a) in r.acts.iter().enumerate() {
+            // value right after the action (and any forced follow-ups), from pi's view, averaged over 16 determinizations
+            let mut acc = 0.0;
+            for _ in 0..16 {
+                let mut t = s; mcts::determinize(&mut t, pi, &mut rng);
+                t.apply(*a);
+                let mut k = 0; while !t.over && k < 50 { let la = t.legal_actions(); if la.len() != 1 { break; } t.apply(la[0]); k += 1; }
+                let (v, _) = m.evaluate(&t, &[], false);
+                acc += if t.over { if t.winner < 0 { 0.0 } else if t.winner as usize == pi { 1.0 } else { -1.0 } } else if t.actor() == pi { v as f64 } else { -(v as f64) };
+            }
+            // ground truth under the current net: play out to the end (both sides MCTS) after this action
+            let mut np = std::env::var("PROBE_PLAYOUTS").ok().and_then(|x| x.parse().ok()).unwrap_or(0usize);
+            if std::env::var("PROBE_REP").is_ok() && r.acts[..i].iter().any(|b| b.t == a.t && b.c == a.c) { np = 0; }
+            let opp_heur = std::env::var("PROBE_OPP").map_or(false, |v| v == "heur");
+            let outs: Vec<(f64, f64)> = (0..np).into_par_iter().map(|k| {
+                let mut rr = Rng::new(99 + k as u64 * 31);
+                let mm = mcts::Mcts::new(&net, sims, 18, 0.0);
+                let mut t = s; mcts::determinize(&mut t, pi, &mut rr);
+                t.apply(*a);
+                let mut gd = 0;
+                while !t.over && gd < 20000 { gd += 1; let la = t.legal_actions(); let b = if la.len() == 1 { la[0] } else if opp_heur && t.actor() != pi { heuristic_act(&t, 4.0, &mut rr) } else { let r = mm.search(&t, sims, false, &mut rr); r.acts[mcts::pick_by_visits(&r.visits, 0.0, &mut rr)] }; t.apply(b); }
+                (if t.winner < 0 { 0.0 } else if t.winner as usize == pi { 1.0 } else { -1.0 }, (t.turn_no / 2) as f64)
+            }).collect();
+            let gt = if np > 0 { format!("   playouts: outcome {:+.2}, rounds {:.0}", outs.iter().map(|o| o.0).sum::<f64>() / np as f64, outs.iter().map(|o| o.1).sum::<f64>() / np as f64) } else { String::new() };
+            if std::env::var("PROBE_REP").is_ok() && np == 0 { continue; }
+            println!("   {:<10}{} prior {:.3} visits {:>4} Q {:+.3}   v(after) {:+.3}{}", ANAMES[a.t as usize], if a.t == engine::A_PLACE { ["", " tile", " +hill", " +res"][a.c as usize + 1] } else { "" }, r.prior[i], r.visits[i], r.q[i], acc / 16.0, gt);
+        }
+        if std::env::var("PROBE_AFTER_TILES").is_ok() {
+            // one level deeper: after drawing tiles, what does the net want? (prior mass per action type, top candidates)
+            let mut t = s;
+            if let Some(a) = t.legal_actions().iter().find(|a| a.t == engine::A_INC_TILES).copied() { t.apply(a); }
+            let r = m.search(&t, sims, false, &mut rng);
+            let mut mass = [0f64; 24]; for (i, a) in r.acts.iter().enumerate() { mass[a.t as usize] += r.prior[i] as f64; }
+            let mut vm = [0f64; 24]; for (i, a) in r.acts.iter().enumerate() { vm[a.t as usize] += r.visits[i] as f64; }
+            let hills = r.acts.iter().filter(|a| a.t == engine::A_PLACE && a.c == 1).count();
+            println!("   after inc_tiles (hand {}): {} candidates, {} hill placements", t.players[pi].hand.len(), r.acts.len(), hills);
+            for k in 0..24 { if mass[k] > 0.0 || vm[k] > 0.0 { println!("     {:<10} prior mass {:.3}  visits {}", ANAMES[k], mass[k], vm[k]); } }
+            let mut idx: Vec<usize> = (0..r.acts.len()).collect(); idx.sort_by(|&x, &y| r.visits[y].cmp(&r.visits[x]));
+            for &i in idx.iter().take(5) { let a = r.acts[i]; println!("     top: {:<8} piece {} prior {:.3} visits {} Q {:+.3}", ANAMES[a.t as usize], a.c, r.prior[i], r.visits[i], r.q[i]); }
+            let hp: f64 = r.acts.iter().enumerate().filter(|(_, a)| a.t == engine::A_PLACE && a.c == 1).map(|(i, _)| r.prior[i] as f64).sum();
+            let hq: Vec<String> = r.acts.iter().enumerate().filter(|(_, a)| a.t == engine::A_PLACE && a.c == 1).take(4).map(|(i, _)| format!("{:+.3}/{}", r.q[i], r.visits[i])).collect();
+            println!("     hill placements: prior mass {:.3}, Q/visits of first: {}", hp, hq.join(" "));
+        }
+        shown += 1; if shown >= 2 { break; }
+    }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|s| s.as_str()) == Some("abtest") {
@@ -506,6 +575,7 @@ fn main() {
     if argv.get(1).map(|s| s.as_str()) == Some("trace") { trace(&argv[2], argv[3].parse().unwrap()); return; }
     if std::env::var("AMINO_FORCE_INCOME").is_ok() { engine::FORCE_INCOME.store(true, std::sync::atomic::Ordering::Relaxed); }
     if let Ok(v) = std::env::var("AMINO_MAX_ROUNDS") { engine::MAX_ROUNDS_RT.store(v.parse().unwrap(), std::sync::atomic::Ordering::Relaxed); }
+    if argv.get(1).map(|s| s.as_str()) == Some("probe") { probe(&argv[2], argv[3].parse().unwrap(), argv[4].parse().unwrap(), argv[5].parse().unwrap()); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("stall") { stall(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("bench") { bench(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
 

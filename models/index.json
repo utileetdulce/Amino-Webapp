@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-26T16:14:46.026Z",
+ "updated": "2026-10-26T18:24:43.076Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -395,6 +395,42 @@
    "default": false,
    "heuristicRate": 0.9375,
    "rawRate": 0.9375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e3.best.json",
+   "id": "m-1a179379915-3100",
+   "name": "Graph-Netz e3 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T17:17:29.000Z",
+   "updatedAt": "2026-10-26T18:14:57.000Z",
+   "rulesVersion": 5,
+   "games": 14640,
+   "iter": 305,
+   "note": "Bester 16-Partien-Test des e3-Laufs (Iter. 305, verrauscht): 37 % (±5) gegen graph-e1.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.96875,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e3.json",
+   "id": "m-1a179379915-3100",
+   "name": "Graph-Netz e3 (präzises Gating, Endstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T17:17:29.000Z",
+   "updatedAt": "2026-10-26T18:17:36.000Z",
+   "rulesVersion": 5,
+   "games": 15216,
+   "iter": 317,
+   "note": "60 Minuten ab graph-e1, Gating alle 50 Iterationen mit 400 Partien, lr 5e-5: keine Beförderung (44–51 %). Endstand 38 % (±5) gegen graph-e1, 72 % gegen az-vtd, 96 % gegen Heuristik – Rückschritt.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.96875,
+   "rawRate": 0.78125,
    "randomRate": null
   },
   {

@@ -113,5 +113,15 @@
   "status": "",
   "name": "Graph-Netz e2 (bester Zwischenstand)",
   "note": "Bester 16-Partien-Test des e2-Laufs (verrauscht)."
+ },
+ "graph-e3.json": {
+  "status": "",
+  "name": "Graph-Netz e3 (präzises Gating, Endstand)",
+  "note": "60 Minuten ab graph-e1, Gating alle 50 Iterationen mit 400 Partien, lr 5e-5: keine Beförderung (44–51 %). Endstand 38 % (±5) gegen graph-e1, 72 % gegen az-vtd, 96 % gegen Heuristik – Rückschritt."
+ },
+ "graph-e3.best.json": {
+  "status": "",
+  "name": "Graph-Netz e3 (bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des e3-Laufs (Iter. 305, verrauscht): 37 % (±5) gegen graph-e1."
  }
 }

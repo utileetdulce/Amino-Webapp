@@ -17,9 +17,10 @@ python3 -m http.server 8000     # oder: npx serve .
 
 (ES-Module und Web-Worker brauchen http://, `file://` funktioniert nicht.) 
 **Deployment** (reine statische Seite, kein Build): 
+* *GitHub Pages* (aktiv, kostenlos): https://utileetdulce.github.io/Amino-Webapp/ – Settings → Pages → „Deploy from a branch“ (`main`, `/`), wird bei jedem Push auf `main` neu veröffentlicht; `.nojekyll` schaltet die Jekyll-Verarbeitung ab.
 * *Netlify*: „Add new site → Import from Git“, Repo wählen – `netlify.toml` setzt Publish-Verzeichnis `.` und keinen Build-Befehl.
 * *Render*: „New → Static Site“ (oder Blueprint mit `render.yaml`), Build Command leer/`echo`, Publish Directory `.`.
-Beide liefern HTTPS, das WebRTC-Multiplayer braucht.
+Alle liefern HTTPS, das WebRTC-Multiplayer braucht.
 
 ## KI-Architektur
 

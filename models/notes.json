@@ -98,5 +98,20 @@
   "status": "",
   "name": "Graph-Netz e1 (bester Zwischenstand)",
   "note": "Bester 16-Partien-Test des e1-Laufs (verrauscht)."
+ },
+ "graph-e2.json": {
+  "status": "",
+  "name": "Graph-Netz e2 (Gating, Endstand)",
+  "note": "60 Minuten ab graph-e1 mit Gating (alle 20 Iterationen, 200 Partien): Endstand 50 % (±5) gegen graph-e1 – kein Fortschritt."
+ },
+ "graph-e2.champion.json": {
+  "status": "",
+  "name": "Graph-Netz e2 (Champion, Iter. 20)",
+  "note": "60 Minuten ab graph-e1 mit Gating (alle 20 Iterationen, 200 Partien): einzige Beförderung (57 %, im Rauschen); 51 % (±5) gegen graph-e1, 79 % gegen az-vtd."
+ },
+ "graph-e2.best.json": {
+  "status": "",
+  "name": "Graph-Netz e2 (bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des e2-Laufs (verrauscht)."
  }
 }

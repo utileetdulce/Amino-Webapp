@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-26T15:06:44.843Z",
+ "updated": "2026-10-26T16:14:46.026Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -341,6 +341,60 @@
    "default": true,
    "heuristicRate": 0.8125,
    "rawRate": 0.78125,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e2.best.json",
+   "id": "m-1a178c0113b-cf00",
+   "name": "Graph-Netz e2 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T15:06:55.000Z",
+   "updatedAt": "2026-10-26T16:04:50.000Z",
+   "rulesVersion": 5,
+   "games": 14160,
+   "iter": 295,
+   "note": "Bester 16-Partien-Test des e2-Laufs (verrauscht).",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.9375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e2.champion.json",
+   "id": "m-1a178c0113b-cf00",
+   "name": "Graph-Netz e2 (Champion, Iter. 20)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T15:06:55.000Z",
+   "updatedAt": "2026-10-26T15:10:28.000Z",
+   "rulesVersion": 5,
+   "games": 960,
+   "iter": 20,
+   "note": "60 Minuten ab graph-e1 mit Gating (alle 20 Iterationen, 200 Partien): einzige Beförderung (57 %, im Rauschen); 51 % (±5) gegen graph-e1, 79 % gegen az-vtd.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.90625,
+   "rawRate": 1,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e2.json",
+   "id": "m-1a178c0113b-cf00",
+   "name": "Graph-Netz e2 (Gating, Endstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T15:06:55.000Z",
+   "updatedAt": "2026-10-26T16:07:00.000Z",
+   "rulesVersion": 5,
+   "games": 14448,
+   "iter": 301,
+   "note": "60 Minuten ab graph-e1 mit Gating (alle 20 Iterationen, 200 Partien): Endstand 50 % (±5) gegen graph-e1 – kein Fortschritt.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.9375,
+   "rawRate": 0.9375,
    "randomRate": null
   },
   {

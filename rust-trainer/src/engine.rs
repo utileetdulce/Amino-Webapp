@@ -7,6 +7,10 @@ pub const G: i32 = 128;
 const GOFF: i32 = 64;
 pub const MAX_ACTIONS: i32 = 70;
 pub const MAX_ROUNDS: i32 = 90;
+/// Round cap actually used (MAX_ROUNDS unless overridden, e.g. by the `stall` diagnostic via AMINO_MAX_ROUNDS).
+/// Diagnostic switch (env AMINO_FORCE_INCOME=1, see main.rs): the AI may not end a turn while its income is unused and available.
+pub static FORCE_INCOME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static MAX_ROUNDS_RT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(MAX_ROUNDS);
 pub const WIN_POINTS: i32 = 7;
 
 pub const TILE_OPEN: [[u8; 3]; 6] = [[1, 1, 1], [1, 1, 0], [1, 0, 0], [1, 1, 1], [1, 1, 0], [1, 1, 1]];
@@ -278,7 +282,7 @@ impl State {
         }
         self.bridges = keep;
         self.cur = (self.cur + 1) % self.n;
-        if self.turn_no / self.n as i32 >= MAX_ROUNDS { return self.finish_by_score(); }
+        if self.turn_no / self.n as i32 >= MAX_ROUNDS_RT.load(std::sync::atomic::Ordering::Relaxed) { return self.finish_by_score(); }
         self.start_turn();
     }
 
@@ -664,7 +668,8 @@ impl State {
             self.overlay_actions(pi, &mut tmp, true);
             if !tmp.is_empty() { acts.push(Act::new(A_SUPER)); }
         }
-        acts.push(Act::new(A_END));
+        let income_open = acts.iter().any(|a| a.t == A_INC_TILES || a.t == A_INC_CARD || a.t == A_INC_HILL);
+        if !(income_open && FORCE_INCOME.load(std::sync::atomic::Ordering::Relaxed)) { acts.push(Act::new(A_END)); }
         acts
     }
 

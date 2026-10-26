@@ -450,6 +450,44 @@ fn vtest(teacher: &str, games: usize, k: usize, rounds: usize, lr: f64, hg: usiz
     for (n, net) in nets.iter() { save(&format!("/tmp/vtest-{}.json", n), net, 0, 0, 0, &[], &json!({"name": n})); }
 }
 
+/// `stall <games> <agentA> <agentB>` (env AMINO_MAX_ROUNDS): how games end - by 7 points, all 12 resources delivered, or the
+/// round cap - and, for capped games, where the resources are and when the score last changed.
+fn stall(games: usize, sa: &str, sb: &str) {
+    let mut nets = std::collections::HashMap::new();
+    for spec in [sa, sb] { let p: Vec<&str> = spec.split(':').collect(); if p.len() > 1 && !nets.contains_key(p[1]) { nets.insert(p[1].to_string(), load_net(p[1]).0); } }
+    let cap = engine::MAX_ROUNDS_RT.load(std::sync::atomic::Ordering::Relaxed);
+    let res: Vec<String> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(777 + g as u64 * 7919);
+        let seat = g % 2;
+        let (a, b) = (parse_agent(sa, &nets), parse_agent(sb, &nets));
+        let ag = if seat == 0 { [a, b] } else { [b, a] };
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        let (mut last_sc, mut last_round) = ((0, 0), 0);
+        let mut guard = 0;
+        while !s.over && guard < 200000 {
+            guard += 1;
+            let pi = s.actor();
+            let act = ag[pi].act(&s, &mut rng);
+            s.apply(act);
+            let sc = (s.score(0), s.score(1));
+            if sc != last_sc { last_sc = sc; last_round = s.turn_no / 2; }
+        }
+        let owned = s.resources.iter().filter(|r| r.owner >= 0).count();
+        let board = s.resources.iter().filter(|r| r.owner < 0 && r.carrier < 0 && r.cell >= 0).count();
+        let carried = s.resources.iter().filter(|r| r.carrier >= 0).count();
+        let why = if !s.over { "guard" } else if s.score(0) >= 7 || s.score(1) >= 7 { "7pts" } else if owned >= 12 { "all12" } else { "cap" };
+        format!("{} {} {}-{} rounds {} lastScore {} owned {} board {} carried {} resStack {} tiles {} hands {}/{} winner {}",
+            why, g, s.score(seat), s.score(1 - seat), s.turn_no / 2, last_round, owned, board, carried, s.res_stack.len(), s.tile_stack.len(),
+            s.players[0].hand.len(), s.players[1].hand.len(), s.winner)
+    }).collect();
+    let n = res.len() as f64;
+    for k in ["7pts", "all12", "cap", "guard"] { println!("{:<6} {:>5.1}%", k, 100.0 * res.iter().filter(|r| r.starts_with(k)).count() as f64 / n); }
+    let capped: Vec<&String> = res.iter().filter(|r| r.starts_with("cap")).collect();
+    println!("cap {} - capped games (first 12):", cap);
+    for r in capped.iter().take(12) { println!("  {}", r); }
+    if std::env::var("STALL_ALL").is_ok() { for r in &res { println!("{}", r); } }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|s| s.as_str()) == Some("abtest") {
@@ -466,6 +504,9 @@ fn main() {
     if argv.get(1).map(|s| s.as_str()) == Some("xcheck") { xcheck(&argv[2], argv[3].parse().unwrap()); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("diag") { diag(&argv[2], argv[3].parse().unwrap(), argv[4].parse().unwrap(), argv.get(5).map_or(3.0, |x| x.parse().unwrap())); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("trace") { trace(&argv[2], argv[3].parse().unwrap()); return; }
+    if std::env::var("AMINO_FORCE_INCOME").is_ok() { engine::FORCE_INCOME.store(true, std::sync::atomic::Ordering::Relaxed); }
+    if let Ok(v) = std::env::var("AMINO_MAX_ROUNDS") { engine::MAX_ROUNDS_RT.store(v.parse().unwrap(), std::sync::atomic::Ordering::Relaxed); }
+    if argv.get(1).map(|s| s.as_str()) == Some("stall") { stall(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("bench") { bench(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
 
     let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);

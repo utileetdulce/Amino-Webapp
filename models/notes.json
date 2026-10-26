@@ -78,5 +78,25 @@
   "status": "weak",
   "name": "AZ v3 (bester Zwischenstand)",
   "note": "Bester Zwischenstand des v3-Laufs nach 16 Testpartien (verrauscht)."
+ },
+ "graph-h2.json": {
+  "status": "",
+  "name": "Graph-Netz v2 (h2)",
+  "note": "graph-h1 mit demselben Rezept 27 Minuten weitertrainiert (15.600 Spiele): mit Suche 77 % (±4) gegen az-vtd, im Rahmen des Rauschens wie graph-h1. Selbstspiel steht noch zu 90 % still (0:0 am Rundenlimit)."
+ },
+ "graph-h2.best.json": {
+  "status": "",
+  "name": "Graph-Netz v2 (h2, bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des h2-Laufs (verrauscht)."
+ },
+ "graph-e1.json": {
+  "status": "",
+  "name": "Graph-Netz (Remis = Niederlage, Exploration)",
+  "note": "graph-h1 + 60 Minuten Selbstspiel mit --draw-z -1 und --tau-moves 400 (24.900 Spiele): kein Stillstand mehr (Selbstspiel 78 % entschieden statt 2 %), 63 % (±5) im Direktvergleich gegen graph-h1 bei 7 % Remis, 75 % gegen az-vtd, 97 % gegen die Heuristik (+5,95 Punkte)."
+ },
+ "graph-e1.best.json": {
+  "status": "",
+  "name": "Graph-Netz e1 (bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des e1-Laufs (verrauscht)."
  }
 }

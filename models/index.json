@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25T23:37:14.912Z",
+ "updated": "2026-10-26T14:42:10.555Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -308,6 +308,42 @@
    "randomRate": null
   },
   {
+   "file": "graph-e1.best.json",
+   "id": "m-1a178666826-6b00",
+   "name": "Graph-Netz e1 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T13:28:59.000Z",
+   "updatedAt": "2026-10-26T14:27:16.000Z",
+   "rulesVersion": 5,
+   "games": 24240,
+   "iter": 505,
+   "note": "Bester 16-Partien-Test des e1-Laufs (verrauscht).",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.9375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-e1.json",
+   "id": "m-1a178666826-6b00",
+   "name": "Graph-Netz (Remis = Niederlage, Exploration)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T13:28:59.000Z",
+   "updatedAt": "2026-10-26T14:29:05.000Z",
+   "rulesVersion": 5,
+   "games": 24864,
+   "iter": 518,
+   "note": "graph-h1 + 60 Minuten Selbstspiel mit --draw-z -1 und --tau-moves 400 (24.900 Spiele): kein Stillstand mehr (Selbstspiel 78 % entschieden statt 2 %), 63 % (±5) im Direktvergleich gegen graph-h1 bei 7 % Remis, 75 % gegen az-vtd, 97 % gegen die Heuristik (+5,95 Punkte).",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.8125,
+   "rawRate": 0.78125,
+   "randomRate": null
+  },
+  {
    "file": "graph-g4.json",
    "id": "m-1a174dcef02-ee00",
    "name": "Graph-Netz (Brett-GNN) v1",
@@ -359,6 +395,42 @@
    "default": true,
    "heuristicRate": null,
    "rawRate": null,
+   "randomRate": null
+  },
+  {
+   "file": "graph-h2.best.json",
+   "id": "m-1a1784c7a0a-2300",
+   "name": "Graph-Netz v2 (h2, bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T13:00:40.000Z",
+   "updatedAt": "2026-10-26T13:21:08.000Z",
+   "rulesVersion": 5,
+   "games": 11280,
+   "iter": 235,
+   "note": "Bester 16-Partien-Test des h2-Laufs (verrauscht).",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 1,
+   "randomRate": null
+  },
+  {
+   "file": "graph-h2.json",
+   "id": "m-1a1784c7a0a-2300",
+   "name": "Graph-Netz v2 (h2)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-26T13:00:40.000Z",
+   "updatedAt": "2026-10-26T13:27:40.000Z",
+   "rulesVersion": 5,
+   "games": 15648,
+   "iter": 326,
+   "note": "graph-h1 mit demselben Rezept 27 Minuten weitertrainiert (15.600 Spiele): mit Suche 77 % (±4) gegen az-vtd, im Rahmen des Rauschens wie graph-h1. Selbstspiel steht noch zu 90 % still (0:0 am Rundenlimit).",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.875,
+   "rawRate": 0.84375,
    "randomRate": null
   },
   {

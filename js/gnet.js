@@ -202,7 +202,7 @@ export class GNet {
       const hs = hillCells(s, q);
       if (hs.length) mergeMin(distEh, cellMin(bfs(s, q, hs.map((h) => h * 3), { underground: false })));
     }
-    const laidNow = new Set(s.resources.filter((r) => r.owner < 0 && r.carrier < 0 && r.cell >= 0 && r.laid === s.turnNo).map((r) => r.cell));
+    const laidNow = new Set(s.resources.filter((r) => r.owner < 0 && r.carrier < 0 && r.cell >= 0 && r.laidTurn === s.turnNo).map((r) => r.cell));
     for (const cid of ids) {
       const c = s.cells[cid];
       const dfo = distFoe.get(cid), deh = distEh.get(cid);

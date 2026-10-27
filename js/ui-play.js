@@ -12,6 +12,22 @@ import { modelLabel, rulesStatus, RULES_VERSION } from './modelmeta.js';
 
 const CARD_ICON = { bridge: '🌉', superimpose: '🧩', blockage: '⛔', wings: '🪽', revenge: '🔥', transport: '🎲' };
 
+// search strength of a "Netz + Baumsuche" seat: simulations per decision and the thinking-time limit (the search stops at
+// whichever comes first; 0 = no time limit)
+const SIMS_STEPS = [8, 16, 32, 64, 128, 256, 512, 1024];
+const TIME_STEPS = [250, 500, 1000, 2000, 3000, 5000, 10000, 0];
+const STRENGTH_KEY = 'amino.searchStrength';
+const DEFAULT_STRENGTH = { si: 4, ti: 0 }; // 128 simulations, at most 0.25 s (as before)
+function loadStrength(i) {
+  try { const v = JSON.parse(localStorage.getItem(STRENGTH_KEY) || '{}')[i]; if (v && SIMS_STEPS[v.si] && TIME_STEPS[v.ti] != null) return v; } catch { /* ignore */ }
+  return { ...DEFAULT_STRENGTH };
+}
+function saveStrength(i, v) {
+  try { const all = JSON.parse(localStorage.getItem(STRENGTH_KEY) || '{}'); all[i] = v; localStorage.setItem(STRENGTH_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+}
+const timeText = (ms) => (ms ? (ms < 1000 ? `${ms / 1000} s`.replace('.', ',') : `${ms / 1000} s`) : 'unbegrenzt');
+const strengthText = (v) => `${SIMS_STEPS[v.si]} Simulationen · Bedenkzeit ${TIME_STEPS[v.ti] ? 'höchstens ' + timeText(TIME_STEPS[v.ti]) : 'unbegrenzt'}`;
+
 export const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const k in attrs) {
@@ -81,6 +97,7 @@ export class PlayUI {
           const rs = rulesStatus(cur);
           row.append(el('div', { class: 'modelinfo' + (rs.ok && cur.status !== 'weak' ? '' : ' warn') },
             `${cur.updatedAt ? 'trainiert ' + new Date(cur.updatedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'Trainingsdatum unbekannt'} · ${rs.text}${cur.note ? ' · ' + cur.note : ''}`));
+          if (seat.kind === 'mcts') row.append(this.strengthBox(seat, i));
         }
       }
       if (seat.kind === 'remote') row.append(this.inviteBox(i));
@@ -93,6 +110,19 @@ export class PlayUI {
     root.append(wrap);
 
     root.append(this.joinPanel(''));
+  }
+
+  // sliders for the search strength of an MCTS seat
+  strengthBox(seat, i) {
+    if (!seat.strength) seat.strength = loadStrength(i);
+    const v = seat.strength;
+    const simsOut = el('output', {}, String(SIMS_STEPS[v.si]));
+    const timeOut = el('output', {}, timeText(TIME_STEPS[v.ti]));
+    const slider = (key, max, out, fmt) => el('input', { type: 'range', min: 0, max, step: 1, value: v[key], oninput: (e) => { v[key] = +e.target.value; out.textContent = fmt(); saveStrength(i, v); } });
+    return el('div', { class: 'strength' },
+      el('label', {}, 'Simulationen ', slider('si', SIMS_STEPS.length - 1, simsOut, () => String(SIMS_STEPS[v.si])), simsOut),
+      el('label', {}, 'Bedenkzeit max. ', slider('ti', TIME_STEPS.length - 1, timeOut, () => timeText(TIME_STEPS[v.ti])), timeOut),
+      el('small', { class: 'muted' }, 'Mehr Simulationen = stärker, aber langsamer. Die Suche stoppt bei der ersten Grenze – auf dem Handy reicht die Zeit oft nicht für alle Simulationen.'));
   }
 
   // ---------------- online matchmaking ----------------
@@ -255,7 +285,10 @@ export class PlayUI {
         if (!s.model) { alert('Kein Modell verfügbar. Trainiere eines im Training-Tab.'); return; }
         if (!nets[s.model]) nets[s.model] = await getNetByName(s.model);
         const mi = this.models.find((m) => m.key === s.model);
-        seats.push({ kind: 'ai', ai: s.kind, model: s.model, modelLabel: mi ? modelLabel(mi) : s.model, modelWarn: mi && !rulesStatus(mi).ok ? rulesStatus(mi).text : '', name: `${name} (${s.kind === 'mcts' ? 'KI-Suche' : 'KI'})` });
+        const str = s.kind === 'mcts' ? (s.strength || loadStrength(i)) : null;
+        const label = (mi ? modelLabel(mi) : s.model) + (str ? ` · ${strengthText(str)}` : '');
+        seats.push({ kind: 'ai', ai: s.kind, model: s.model, modelLabel: label, modelWarn: mi && !rulesStatus(mi).ok ? rulesStatus(mi).text : '', name: `${name} (${s.kind === 'mcts' ? 'KI-Suche' : 'KI'})`,
+          ...(str ? { sims: SIMS_STEPS[str.si], timeMs: TIME_STEPS[str.ti] } : {}) });
       } else seats.push({ kind: 'ai', ai: s.kind, name: `${name} (${s.kind === 'random' ? 'Zufall' : 'KI'})` });
     }
     const hasRemote = seats.some((s) => s.kind === 'remote');

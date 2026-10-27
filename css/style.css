@@ -220,6 +220,10 @@ button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
 .hint { background: #fff4c9; color: #4a3a05; border-radius: 10px; padding: 8px 10px; margin: 0; font-size: 13px; }
 @media (prefers-color-scheme: dark) { .hint { background: #4b4a22; color: #f6efc0; } }
 
+.strength { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px 4px; font-size: 13px; }
+.strength label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.strength input[type=range] { flex: 1 1 140px; min-width: 120px; max-width: 260px; }
+.strength output { min-width: 4.5em; font-variant-numeric: tabular-nums; font-weight: 600; }
 .modelinfo { flex-basis: 100%; font-size: 12px; color: var(--muted); padding: 2px 0 2px 4px; }
 .modelinfo.warn { color: #9a5b00; } @media (prefers-color-scheme: dark) { .modelinfo.warn { color: #f0b860; } }
 .modelbox { background: var(--bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }

@@ -16,7 +16,7 @@ export const KINDS = ['Blume', 'Pilz', 'Raupe'];
 export const WIN_POINTS = 7;
 
 // Bump RULES_VERSION whenever game rules / action generation change in a way that makes older trained weights "stale".
-export const RULES_VERSION = 5;
+export const RULES_VERSION = 6;
 export const MAX_AI_CARDS = 5; // AI candidate generation: no more card income at this many cards
 export const RULES_CHANGELOG = [
   { v: 1, date: '2026-10-20', text: 'Erste Regelumsetzung' },
@@ -24,6 +24,7 @@ export const RULES_CHANGELOG = [
   { v: 3, date: '2026-10-22', text: 'Hausregel: Ameise mit Ressource bewegt sich nur per Transport; Transport im eigenen Hügel lagert sofort ein' },
   { v: 4, date: '2026-10-23', text: 'KI-Kandidaten ohne Schleifen (kein Zurück auf besuchte Knoten, kein Laden↔Abladen)' },
   { v: 5, date: '2026-10-24', text: 'KI-Kandidaten: mit leerer Hand nur Dreiecke als Einkommen, höchstens 5 Karten horten (verhindert Stillstand ohne Ausbau)' },
+  { v: 6, date: '2026-10-27', text: 'Abstandsregel beim Hügelbau zählt auch getragene Ressourcen; eine Ressource liegt auf genau einem Wegstück ihres Dreiecks (verbindet getrennte Wege nicht mehr)' },
 ];
 export const MAX_ACTIONS = 70;
 export const MAX_ROUNDS = 90;
@@ -70,18 +71,23 @@ const shapeSig = (sh) => sh.open.join('') + '|' + sh.comps.map((c) => c.join('')
 function putCell(state, x, y, tile, rot) {
   const sh = makeCellShape(x, y, tile, rot);
   const id = cellId(x, y);
-  const c = { id, x, y, ...sh, hill: -1, res: -1, block: -1, bridge: 0, overlaid: false };
+  const c = { id, x, y, ...sh, hill: -1, res: -1, re: -1, block: -1, bridge: 0, overlaid: false };
   state.cells[id] = c;
   return c;
 }
 
+// A hill joins all paths of its triangle; a resource lies on one path piece (edge `re`) and leaves the paths as they are.
 export function compsOf(c) {
-  return c.hill >= 0 || c.res >= 0 ? [c.allOpen] : c.comps;
+  return c.hill >= 0 ? [c.allOpen] : c.comps;
 }
 function compIndex(c, edge) {
   const cs = compsOf(c);
   for (let i = 0; i < cs.length; i++) if (cs[i].includes(edge)) return i;
   return 0;
+}
+// path node the resource on cell c lies on
+export function resNode(c) {
+  return c.id * 3 + compIndex(c, c.re);
 }
 
 // ---------- setup ----------
@@ -279,9 +285,24 @@ function placementOk(s, id, sh) {
 function hasOwnHillNear(s, id, pi) {
   return gridDistWithin(id, 2, (c) => { const cc = s.cells[c]; return !!cc && cc.hill === pi; });
 }
-// only resources lying on the board count for the distance rule
-function resOnBoardNear(s, id) {
-  return gridDistWithin(id, 2, (c) => { const cc = s.cells[c]; return !!cc && cc.res >= 0; });
+// resources on the board and resources being carried (at the carrier's cell) count for the distance rule
+function resNear(s, id) {
+  const at = new Set();
+  for (const r of s.resources) {
+    if (r.owner >= 0) continue;
+    if (r.cell >= 0) at.add(r.cell);
+    else if (r.carrier >= 0 && s.players[r.carrier].ant) at.add(s.players[r.carrier].ant.cell);
+  }
+  return at.size > 0 && gridDistWithin(id, 2, (c) => at.has(c));
+}
+
+// path pieces of shape sh at cell id that connect to the existing labyrinth
+function connectedComps(s, id, sh) {
+  const out = [];
+  sh.comps.forEach((comp, i) => {
+    if (comp.some((e) => !!s.cells[neighborId(id, e)[0]])) out.push(i);
+  });
+  return out;
 }
 
 function uniq(a) { return [...new Set(a)]; }
@@ -326,7 +347,8 @@ function rotsUnique(x, y, tile) {
   return out;
 }
 
-export function placementActions(s, pi) {
+// full: a resource may go on any path piece; AI candidates only use pieces connected to the labyrinth
+export function placementActions(s, pi, full = true) {
   const p = s.players[pi];
   const acts = [];
   const tiles = uniq(p.hand);
@@ -339,12 +361,12 @@ export function placementActions(s, pi) {
         if (!placementOk(s, id, sh)) continue;
         acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 0 });
         if (p.hillsInHand > 0) {
-          if (hillOk === null) hillOk = !resOnBoardNear(s, id);
+          if (hillOk === null) hillOk = !resNear(s, id);
           if (hillOk) acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 1 });
         }
         if (s.resStack.length > 0) {
           if (resOk === null) resOk = !hasOwnHillNear(s, id, pi);
-          if (resOk) acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 2 });
+          if (resOk) for (const comp of full ? sh.comps.map((_, i) => i) : connectedComps(s, id, sh)) acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 2, comp });
         }
       }
     }
@@ -387,7 +409,7 @@ export function interestingNodes(s, pi) {
   // nodes that matter for AI: free resources, enemy carriers, own hills
   const out = new Set();
   for (const r of s.resources) {
-    if (r.owner < 0 && r.carrier < 0 && r.cell >= 0) for (const n of nodesOfCell(s, r.cell)) out.add(n);
+    if (r.owner < 0 && r.carrier < 0 && r.cell >= 0) out.add(resNode(s.cells[r.cell]));
   }
   for (let q = 0; q < s.n; q++) {
     if (q === pi) continue;
@@ -426,7 +448,7 @@ export function legalActions(s, full = false) {
       }
     }
   }
-  for (const a of placementActions(s, pi)) acts.push(a);
+  for (const a of placementActions(s, pi, full)) acts.push(a);
 
   const node = antNode(s, pi);
   const cs = node >= 0 ? s.cells[nodeCell(node)] : null;
@@ -448,7 +470,7 @@ export function legalActions(s, full = false) {
       for (let i = 0; i < dests.length; i += stride) chosen.add(dests[i][0]);
       for (const n of chosen) acts.push({ t: 'move', to: n });
     }
-    if (p.carry < 0 && cs && cs.res >= 0 && (full || s.lastT !== 'unload')) acts.push({ t: 'load' });
+    if (p.carry < 0 && cs && cs.res >= 0 && resNode(cs) === node && (full || s.lastT !== 'unload')) acts.push({ t: 'load' });
     if (p.carry >= 0 && cs.res < 0 && (full || s.lastT !== 'load')) acts.push({ t: 'unload' });
     if (!u.fight && p.carry < 0) {
       for (let q = 0; q < s.n; q++) {
@@ -647,6 +669,7 @@ export function applyAction(s, a) {
         const kind = s.resStack.pop();
         s.resources.push({ kind, cell: c.id, carrier: -1, owner: -1, laidTurn: s.turnNo });
         c.res = s.resources.length - 1;
+        c.re = c.comps[a.comp ?? 0][0];
         info.kind = kind;
       }
       break;
@@ -655,15 +678,13 @@ export function applyAction(s, a) {
     case 'load': {
       const c = s.cells[p.ant.cell];
       const r = s.resources[c.res];
-      r.carrier = pi; r.cell = -1; c.res = -1; p.carry = s.resources.indexOf(r);
-      for (const q of s.players) if (q.ant && q.ant.cell === c.id) q.ant.free = true;
+      r.carrier = pi; r.cell = -1; c.res = -1; c.re = -1; p.carry = s.resources.indexOf(r);
       break;
     }
     case 'unload': {
       const c = s.cells[p.ant.cell];
       const r = s.resources[p.carry];
-      r.carrier = -1; r.cell = c.id; c.res = p.carry; p.carry = -1;
-      for (const q of s.players) if (q.ant && q.ant.cell === c.id) q.ant.free = true;
+      r.carrier = -1; r.cell = c.id; c.res = p.carry; c.re = p.ant.edge; p.carry = -1;
       break;
     }
     case 'fight': {
@@ -724,7 +745,7 @@ export function applyAction(s, a) {
       if (p.carry >= 0) { // wings cannot carry resources: drop it here
         const c = s.cells[p.ant.cell];
         const r = s.resources[p.carry];
-        r.carrier = -1; r.cell = c.id; c.res = p.carry; p.carry = -1;
+        r.carrier = -1; r.cell = c.id; c.res = p.carry; c.re = p.ant.edge; p.carry = -1;
       }
       moveAnt(s, pi, a.to);
       break;

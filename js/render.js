@@ -49,6 +49,15 @@ export function drawPaths(ctx, cell, junction, tx, ty, sc, color = '#f6f2e2', wi
   }
 }
 
+// A point on path piece `comp` (list of edges) of cell c: on a stub, on a curve's apex, at the hub of a Y
+export function compSpot(c, comp, stubF = 0.4) {
+  const [cx, cy] = cellCenter(c.x, c.y);
+  const mids = comp.map((e) => edgeMid(c.x, c.y, e));
+  const mx = mids.reduce((q, m) => q + m[0], 0) / mids.length, my = mids.reduce((q, m) => q + m[1], 0) / mids.length;
+  const f = comp.length === 1 ? stubF : 0.5;
+  return [mx + (cx - mx) * f, my + (cy - my) * f];
+}
+
 export class BoardView {
   constructor(canvas) {
     this.cv = canvas;
@@ -278,7 +287,7 @@ export class BoardView {
       ctx.fillStyle = g; ctx.fill();
       ctx.strokeStyle = c.overlaid ? '#d8c27a' : 'rgba(255,255,255,.5)'; ctx.lineWidth = c.overlaid ? 2.2 : 1; ctx.stroke();
       if (this.cellColors.has(c.id)) { triPath(ctx, v, tx, ty, sc); ctx.fillStyle = this.cellColors.get(c.id); ctx.fill(); }
-      drawPaths(ctx, c, c.hill >= 0 || c.res >= 0, tx, ty, sc);
+      drawPaths(ctx, c, c.hill >= 0, tx, ty, sc);
     }
     // bridges
     for (const b of s.bridges) {
@@ -314,7 +323,11 @@ export class BoardView {
       }
       if (c.res >= 0) {
         const res = s.resources[c.res];
-        drawResource(ctx, X + (c.hill >= 0 ? r * 1.35 : 0), Y - (c.hill >= 0 ? r * 0.75 : 0), r, res.kind);
+        if (c.hill >= 0) drawResource(ctx, X + r * 1.35, Y - r * 0.75, r, res.kind);
+        else { // on its path piece
+          const [rx, ry] = compSpot(c, c.comps.find((g) => g.includes(c.re)) || c.comps[0]);
+          drawResource(ctx, tx(rx), ty(ry), r, res.kind);
+        }
       }
       if (c.block >= 0) {
         ctx.fillStyle = PLAYER_COLORS[c.block]; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
@@ -326,7 +339,7 @@ export class BoardView {
       if (c.hill >= 0 || c.res >= 0 || c.block >= 0) occupied.push(c);
     }
     ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    for (const c of occupied) { ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0 || c.res >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
+    for (const c of occupied) { ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
     ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
     // ants: placed on the path group (component) they actually stand in
     const byCell = {};
@@ -334,19 +347,15 @@ export class BoardView {
     for (const k in byCell) {
       const list = byCell[k];
       const c = s.cells[k];
-      const junction = c.hill >= 0 || c.res >= 0;
+      const junction = c.hill >= 0;
       const comps = junction ? [c.allOpen] : c.comps;
       const [cx, cy] = cellCenter(c.x, c.y);
       list.forEach((p, i) => {
         let ax = cx, ay = cy;
         const comp = comps.find((g) => g.includes(p.ant.edge)) || comps[0];
-        if (comp && !junction) {
-          const mids = comp.map((e) => edgeMid(c.x, c.y, e));
-          const mx = mids.reduce((q, m) => q + m[0], 0) / mids.length, my = mids.reduce((q, m) => q + m[1], 0) / mids.length;
-          const f = comp.length === 1 ? 0.5 : 0.35; // stub: on the stub, curve: near its middle
-          ax = mx + (cx - mx) * f; ay = my + (cy - my) * f;
-        }
-        const crowd = junction ? [-0.17, 0.12] : [0, 0];
+        if (comp && !junction) [ax, ay] = compSpot(c, comp, 0.5);
+        const withRes = c.res >= 0 && comp && comp.includes(c.re); // shares its path piece with a resource
+        const crowd = junction || withRes ? [-0.17, 0.12] : [0, 0];
         const off = (i - (list.length - 1) / 2) * sc * 0.22;
         const X = tx(ax) + crowd[0] * sc + off, Y = ty(ay) + crowd[1] * sc;
         const r = sc * 0.125;
@@ -368,14 +377,15 @@ export class BoardView {
       const v = cellVerts(cell.x, cell.y);
       triPath(ctx, v, tx, ty, sc);
       ctx.globalAlpha = 0.85; ctx.fillStyle = g.ok === false ? '#b55' : '#9bbf86'; ctx.fill();
-      drawPaths(ctx, cell, g.piece > 0, tx, ty, sc);
+      drawPaths(ctx, cell, g.piece === 1, tx, ty, sc);
       ctx.globalAlpha = 1;
       ctx.strokeStyle = g.ok === false ? '#c22' : '#fff'; ctx.lineWidth = 2.5; triPath(ctx, v, tx, ty, sc); ctx.stroke();
       const [cx, cy] = cellCenter(cell.x, cell.y);
       if (g.piece === 1) {
         ctx.fillStyle = PLAYER_COLORS[g.seat ?? 0]; ctx.beginPath(); ctx.arc(tx(cx), ty(cy) + sc * 0.07, sc * 0.25, Math.PI, 0); ctx.fill();
       } else if (g.piece === 2) {
-        ctx.font = `${Math.round(sc * 0.3)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('❔', tx(cx), ty(cy));
+        const [rx, ry] = compSpot(cell, cell.comps[g.comp ?? 0] || cell.comps[0]);
+        ctx.font = `${Math.round(sc * 0.3)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('❔', tx(rx), ty(ry));
       }
     } else if (this.hover >= 0 && this.cellColors.has(this.hover)) {
       const v = cellVerts(cellX(this.hover), cellY(this.hover));

@@ -1,5 +1,5 @@
 // Play tab: setup screen, multiplayer lobby, and the interactive game UI.
-import { legalActions, actor, score, TILE_TYPES, PLAYER_COLORS, PLAYER_COLOR_NAMES, KINDS, WIN_POINTS, winnerText, hasCard, cloneState, applyAction, bfs, antStarts, nodeCell } from './engine.js';
+import { legalActions, actor, score, TILE_TYPES, PLAYER_COLORS, PLAYER_COLOR_NAMES, KINDS, WIN_POINTS, winnerText, hasCard, cloneState, applyAction, bfs, antStarts, antNode, nodeCell, resNode } from './engine.js';
 import { BoardView, drawTilePreview, KIND_ICON } from './render.js';
 import { cellX, cellY, cellId } from './geometry.js';
 import { GameController } from './game.js';
@@ -525,7 +525,8 @@ export class PlayUI {
     const me = this.viewSeat();
     return this.plan(({ sim, find, run }) => {
       if (sim.players[me].carry >= 0) return false;
-      if (sim.players[me].ant.cell !== cell) { const mv = find('move', (a) => Math.floor(a.to / 3) === cell); if (!mv) return false; run(mv); }
+      const rn = resNode(sim.cells[cell]);
+      if (antNode(sim, me) !== rn) { const mv = find('move', (a) => a.to === rn); if (!mv) return false; run(mv); }
       const l = find('load');
       if (!l) return false;
       run(l); return true;
@@ -881,7 +882,7 @@ export class PlayUI {
       case 'move': case 'tmove': case 'wings': {
         const t = this.mode;
         this.dmap = new Map();
-        for (const a of A) if (a.t === t) { const cid = Math.floor(a.to / 3); if (!this.dmap.has(cid)) this.dmap.set(cid, a); }
+        for (const a of A) if (a.t === t) { const cid = Math.floor(a.to / 3); if (!this.dmap.has(cid)) this.dmap.set(cid, this.destFor(t, cid)); }
         for (const c of this.dmap.keys()) b.cellColors.set(c, 'rgba(255,240,140,.35)');
         break;
       }
@@ -902,7 +903,7 @@ export class PlayUI {
       }
       default: break;
     }
-    if (this.pp) b.ghost = { cell: this.pp.cid, tile: this.pp.tile, rot: this.pp.rot, piece: this.mode === 'place' ? this.pp.piece : 0, seat: this.viewSeat() };
+    if (this.pp) b.ghost = { cell: this.pp.cid, tile: this.pp.tile, rot: this.pp.rot, piece: this.mode === 'place' ? this.pp.piece : 0, comp: this.pp.comp, seat: this.viewSeat() };
   }
 
   onBoardHover(cid) {
@@ -911,7 +912,8 @@ export class PlayUI {
     if ((this.mode === 'place' || this.mode === 'overlay') && this.pmap?.has(cid)) {
       const rots = this.pmap.get(cid);
       const rot = rots.includes(this.rot) ? this.rot : rots[0];
-      b.ghost = { cell: cid, tile: this.selTile, rot, piece: this.mode === 'place' ? this.piece : 0, seat: this.viewSeat() };
+      const ca = this.mode === 'place' && this.piece === 2 ? this.acts.find((a) => a.t === 'place' && a.cell === cid && a.tile === this.selTile && a.rot === rot && a.piece === 2) : null;
+      b.ghost = { cell: cid, tile: this.selTile, rot, piece: this.mode === 'place' ? this.piece : 0, comp: ca ? ca.comp : 0, seat: this.viewSeat() };
     } else b.ghost = null;
     b.draw();
   }
@@ -945,6 +947,13 @@ export class PlayUI {
 
   previewPlace(cid, ev) { this.openPicker(cid, ev); }
 
+  // move-like action into cell cid; on a triangle with separate paths prefer the piece the resource lies on
+  destFor(t, cid) {
+    const c = this.ctrl.state.cells[cid];
+    const list = (this.acts || []).filter((a) => a.t === t && Math.floor(a.to / 3) === cid);
+    return (c && c.res >= 0 && list.find((a) => a.to === resNode(c))) || list[0];
+  }
+
   // placement picker: choose tile, accessory and rotation for the tapped cell, ghost shows the result
   pickerOptions(cid) {
     const want = this.mode === 'overlay' ? 'overlay' : 'place';
@@ -959,8 +968,13 @@ export class PlayUI {
     const pieces = [...new Set(list.filter((a) => a.tile === tile).map((a) => a.piece ?? 0))];
     const piece = pieces.includes(this.piece) ? this.piece : pieces[0];
     const rots = [...new Set(list.filter((a) => a.tile === tile && (a.piece ?? 0) === piece).map((a) => a.rot))];
-    this.pp = { cid, tile, piece, rot: rots.includes(this.rot) ? this.rot : rots[0], ev };
+    this.pp = { cid, tile, piece, rot: rots.includes(this.rot) ? this.rot : rots[0], comp: 0, ev };
     this.drawPicker();
+  }
+  // path pieces a resource may go on for the picker's tile/rotation
+  pickerComps(list) {
+    const pp = this.pp;
+    return list.filter((a) => a.tile === pp.tile && a.piece === 2 && a.rot === pp.rot).map((a) => a.comp);
   }
   cyclePickerRot() {
     const { list } = this.pickerOptions(this.pp.cid);
@@ -977,6 +991,8 @@ export class PlayUI {
     const pieces = [...new Set(list.filter((a) => a.tile === pp.tile).map((a) => a.piece ?? 0))].sort();
     const rots = [...new Set(list.filter((a) => a.tile === pp.tile && (a.piece ?? 0) === pp.piece).map((a) => a.rot))];
     this.selTile = pp.tile; this.piece = pp.piece;
+    const comps = !over && pp.piece === 2 ? this.pickerComps(list) : [];
+    if (comps.length && !comps.includes(pp.comp)) pp.comp = comps[0];
     m.innerHTML = '';
     m.classList.add('picker');
     m.append(el('div', { class: 'ctx-title' }, over ? 'Überlagern – Dreieck wählen' : 'Dreieck wählen'));
@@ -1003,9 +1019,11 @@ export class PlayUI {
     const ok = el('button', { class: 'primary', onclick: (e) => {
       e.stopPropagation();
       const a = over ? { t: 'overlay', cell: pp.cid, tile: pp.tile, rot: pp.rot } : { t: 'place', cell: pp.cid, tile: pp.tile, rot: pp.rot, piece: pp.piece };
+      if (!over && pp.piece === 2) a.comp = pp.comp;
       this.pp = null; m.classList.remove('picker'); this.hideCtx();
       this.ctrl.dispatch(a, actor(this.ctrl.state));
     } }, over ? '✔ Überlagern' : '✔ Hier legen');
+    if (comps.length > 1) m.append(el('div', { class: 'seg' }, el('button', { onclick: (e) => { e.stopPropagation(); pp.comp = comps[(comps.indexOf(pp.comp) + 1) % comps.length]; this.drawPicker(); } }, `❔ Anderes Wegstück (${comps.indexOf(pp.comp) + 1}/${comps.length})`)));
     m.append(el('div', { class: 'seg' }, rots.length > 1 ? el('button', { onclick: (e) => { e.stopPropagation(); this.cyclePickerRot(); } }, '⟳ Drehen') : null, ok,
       el('button', { onclick: (e) => { e.stopPropagation(); this.pp = null; m.classList.remove('picker'); this.refresh(); } }, '✖')));
     this.updateBoardMode(); this.board.draw();
@@ -1030,11 +1048,11 @@ export class PlayUI {
     }
     const ov = A.filter((a) => a.t === 'overlay' && a.cell === cid);
     for (const t of new Set(ov.map((a) => a.tile))) items.push({ label: `▲ Überlagern mit ${TILE_TYPES[t].name}`, fn: () => { this.selTile = t; this.mode = 'overlay'; this.refresh(); this.previewPlace(cid, ev); } });
-    const mv = A.find((a) => a.t === 'move' && Math.floor(a.to / 3) === cid);
+    const mv = this.destFor('move', cid);
     if (mv) items.push({ label: '🐜 Ameise hierher', fn: () => dsp(mv) });
-    const tm = A.find((a) => a.t === 'tmove' && Math.floor(a.to / 3) === cid);
+    const tm = this.destFor('tmove', cid);
     if (tm) items.push({ label: '🎲 Ressource hierher bringen', fn: () => dsp(tm) });
-    const wg = A.find((a) => a.t === 'wings' && Math.floor(a.to / 3) === cid);
+    const wg = this.destFor('wings', cid);
     if (wg) items.push({ label: '🪽 Flügel hierher', fn: () => dsp(wg) });
     const bl = A.find((a) => a.t === 'blockage' && a.cell === cid);
     if (bl) items.push({ label: '⛔ Blockade hier', fn: () => dsp(bl) });

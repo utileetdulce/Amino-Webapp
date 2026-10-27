@@ -1,6 +1,6 @@
 // Presentation layer: human-readable descriptions of actions plus camera/popup/dice hints.
 import { TILE_TYPES, KINDS, score } from './engine.js';
-import { nodeCell } from './engine.js';
+import { nodeCell, resNode } from './engine.js';
 import { KIND_ICON } from './render.js';
 import { CARD_NAMES } from './text.js';
 
@@ -31,8 +31,9 @@ export function describeRich(s, a, pi) {
     case 'move': {
       const to = cellOf(a.to);
       const tc = s.cells[to];
+      const atRes = tc.res >= 0 && resNode(tc) === a.to;
       let why = 'Die Ameise läuft durch das Wegenetz.';
-      if (tc.res >= 0) why = `Ziel: freie Ressource ${KIND_ICON[s.resources[tc.res].kind]} ${KINDS[s.resources[tc.res].kind]}.`;
+      if (atRes) why = `Ziel: freie Ressource ${KIND_ICON[s.resources[tc.res].kind]} ${KINDS[s.resources[tc.res].kind]}.`;
       else if (tc.hill === pi) why = 'Zurück zum eigenen Hügel.';
       else if (tc.hill >= 0) why = `Unterwegs über den Hügel von ${nm(s, tc.hill)}.`;
       else {
@@ -42,7 +43,7 @@ export function describeRich(s, a, pi) {
       if (p.carry >= 0 && tc.hill !== pi) why += ' Sie trägt eine Ressource mit.';
       const under = from != null && s.cells[from].hill === pi && tc.hill === pi;
       const carry = p.carry >= 0 ? ` (trägt ${KIND_ICON[s.resources[p.carry].kind]} ${KINDS[s.resources[p.carry].kind]})` : '';
-      const dest = tc.hill === pi ? ' zum eigenen Hügel' : tc.hill >= 0 ? ` über den Hügel von ${nm(s, tc.hill)}` : tc.res >= 0 ? ` zu ${KIND_ICON[s.resources[tc.res].kind]} ${KINDS[s.resources[tc.res].kind]}` : '';
+      const dest = tc.hill === pi ? ' zum eigenen Hügel' : tc.hill >= 0 ? ` über den Hügel von ${nm(s, tc.hill)}` : atRes ? ` zu ${KIND_ICON[s.resources[tc.res].kind]} ${KINDS[s.resources[tc.res].kind]}` : '';
       const log = under ? `${me} nutzt den Tunnel zwischen den Hügeln${carry}` : `${me} bewegt die Ameise${dest}${carry}${p.carry >= 0 && tc.hill === pi ? ' – noch nicht eingelagert, dafür braucht es einen Transport' : ''}`;
       return r('🐜', under ? `${me} nutzt den Tunnel zwischen den Hügeln` : `${me} bewegt die Ameise`, why, [from, to], { path: true, log });
     }

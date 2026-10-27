@@ -93,7 +93,7 @@ export class GNet {
         x[o + 4] = comps.length / 3;
         x[o + 5] = c.hill === pi ? 1 : 0;
         x[o + 6] = c.hill >= 0 && c.hill !== pi ? 1 : 0;
-        x[o + 7] = fr ? fr.val / 3 : 0;
+        x[o + 7] = fr && fr.node === cid * 3 + ci ? fr.val / 3 : 0;
         x[o + 8] = c.block >= 0 ? 1 : 0;
         x[o + 9] = c.bridge > 0 ? 1 : 0;
         x[o + 10] = node === antNode ? 1 : 0;
@@ -186,13 +186,13 @@ export class GNet {
     for (const fn of foeNodes) rflags[region[fn]] |= R_FOE;
     for (const cid of ids) {
       const c = s.cells[cid];
-      const freeHere = ctx.freeRes.some((r) => r.cell === cid);
+      const fr = ctx.freeRes.find((r) => r.cell === cid);
       const k = compsOf(c).length;
       for (let ci = 0; ci < k; ci++) {
         const r = region[base.get(cid) + ci];
         if (c.hill === pi) rflags[r] |= R_MYH;
         if (c.hill >= 0 && c.hill !== pi) rflags[r] |= R_EH;
-        if (freeHere) rflags[r] |= R_FREE;
+        if (fr && fr.node === cid * 3 + ci) rflags[r] |= R_FREE;
       }
     }
     const distFoe = new Map(), distEh = new Map();
@@ -244,7 +244,7 @@ export class GNet {
       const cid = r.cell;
       if (ctx.distAnt.has(cid)) { dm = Math.min(dm, ctx.distAnt.get(cid)); nm++; }
       if (distFoe.has(cid)) { df = Math.min(df, distFoe.get(cid)); nfo++; }
-      if (g.ant >= 0 && region[base.get(cid)] === region[g.ant]) nregFree++;
+      if (g.ant >= 0 && region[base.get(cid) + (r.node - cid * 3)] === region[g.ant]) nregFree++;
     }
     gx[8] = clamp((df - dm) / 14, -1, 1);
     gx[9] = nm / 4; gx[10] = nfo / 4;

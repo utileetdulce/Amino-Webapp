@@ -33,7 +33,7 @@ pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
 /// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
-pub const RULES_VERSION: u32 = 5;
+pub const RULES_VERSION: u32 = 6;
 pub const MAX_AI_CARDS: usize = 5;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
@@ -63,7 +63,7 @@ pub const P_TMOVE: u8 = 3;
 pub const P_SUPER: u8 = 4;
 
 /// Compact action. Field use per type:
-/// inc_hill a=cell | swap a=q b=give c=take | place g=gid a=tile b=rot c=piece | move/tmove a=node | fight a=q
+/// inc_hill a=cell | swap a=q b=give c=take | place g=gid a=tile b=rot c=piece (resource: c = 2 + path piece) | move/tmove a=node | fight a=q
 /// transport a=card | bridge a,b=cells | blockage a=cell | wings a=node b,c=via cards(255=none)
 /// overlay a=cell b=tile c=rot | hide/guess a=v
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
@@ -128,18 +128,19 @@ fn shape_eq(a: &Shape, b: &Shape) -> bool {
 pub struct Cell {
     pub gid: i32, pub x: i8, pub y: i8, pub tile: u8, pub rot: u8,
     pub sh: Shape,
-    pub hill: i8, pub res: i8, pub block: i8, pub bridge: u8, pub overlaid: bool,
+    pub hill: i8, pub res: i8, pub re: i8, pub block: i8, pub bridge: u8, pub overlaid: bool,
 }
 impl Cell {
     #[inline] pub fn xy(&self) -> (i32, i32) { (self.x as i32, self.y as i32) }
     #[inline] pub fn open(&self, e: usize) -> u8 { self.sh.open[e] }
-    #[inline] pub fn ncomps(&self) -> usize { if self.hill >= 0 || self.res >= 0 { 1 } else { self.sh.nc as usize } }
+    // a hill joins all paths of its triangle; a resource lies on one path piece (edge `re`)
+    #[inline] pub fn ncomps(&self) -> usize { if self.hill >= 0 { 1 } else { self.sh.nc as usize } }
     #[inline] pub fn comp(&self, ci: usize) -> u8 {
-        if self.hill >= 0 || self.res >= 0 { if ci == 0 { self.sh.all_open } else { 0 } }
+        if self.hill >= 0 { if ci == 0 { self.sh.all_open } else { 0 } }
         else if ci < self.sh.nc as usize { self.sh.comps[ci] } else { 0 }
     }
     #[inline] pub fn comp_index(&self, edge: usize) -> usize {
-        if self.hill >= 0 || self.res >= 0 { return 0; }
+        if self.hill >= 0 { return 0; }
         for i in 0..self.sh.nc as usize { if (self.sh.comps[i] >> edge) & 1 == 1 { return i; } }
         0
     }
@@ -226,7 +227,7 @@ impl State {
         let id = gid(x, y);
         let slot = self.ncells;
         self.ncells += 1;
-        self.cells[slot] = Cell { gid: id, x: x as i8, y: y as i8, tile: tile as u8, rot: rot as u8, sh, hill: -1, res: -1, block: -1, bridge: 0, overlaid: false };
+        self.cells[slot] = Cell { gid: id, x: x as i8, y: y as i8, tile: tile as u8, rot: rot as u8, sh, hill: -1, res: -1, re: -1, block: -1, bridge: 0, overlaid: false };
         self.grid[id as usize] = slot as u8;
         let mut pos = self.order.len();
         for (k, &o) in self.order.iter().enumerate() { if self.cells[o as usize].gid > id { pos = k; break; } }
@@ -377,7 +378,16 @@ impl State {
         false
     }
     fn has_own_hill_near(&self, x: i32, y: i32, pi: usize) -> bool { self.any_card_in_grid_dist2(x, y, |c| c.hill == pi as i8) }
-    fn res_on_board_near(&self, x: i32, y: i32) -> bool { self.any_card_in_grid_dist2(x, y, |c| c.res >= 0) }
+    /// path node the resource on cell `slot` lies on
+    #[inline] pub fn res_node(&self, slot: usize) -> usize { slot * 3 + self.cells[slot].comp_index(self.cells[slot].re as usize) }
+    /// resources on the board and resources being carried (at the carrier's cell) count for the distance rule
+    fn res_near(&self, x: i32, y: i32) -> bool {
+        let mut carried: FV<i32, 6> = FV::new();
+        for r in self.resources.iter() {
+            if r.owner < 0 && r.carrier >= 0 { if let Some(a) = &self.players[r.carrier as usize].ant { carried.push(self.cells[a.cell as usize].gid); } }
+        }
+        self.any_card_in_grid_dist2(x, y, |c| c.res >= 0 || carried.contains(c.gid))
+    }
 
     fn frontier_cells(&self) -> Vec<(i32, i32)> {
         let mut seen = [0u64; (G * G / 64) as usize];
@@ -437,7 +447,7 @@ impl State {
         let add = |out: &mut FV<u8, 96>, n: u8| { if !out.contains(n) { out.push(n); } };
         for r in self.resources.iter() {
             if r.owner < 0 && r.carrier < 0 && r.cell >= 0 {
-                for i in 0..self.cells[r.cell as usize].ncomps() { add(&mut out, r.cell as u8 * 3 + i as u8); }
+                add(&mut out, self.res_node(r.cell as usize) as u8);
             }
         }
         for q in 0..self.n {
@@ -484,12 +494,19 @@ impl State {
                     if !self.placement_ok(x, y, sh) { continue; }
                     acts.push(Act { t: A_PLACE, a: t, b: *r, c: 0, g: id });
                     if p.hills_in_hand > 0 {
-                        if hill_ok.is_none() { hill_ok = Some(!self.res_on_board_near(x, y)); }
+                        if hill_ok.is_none() { hill_ok = Some(!self.res_near(x, y)); }
                         if hill_ok.unwrap() { acts.push(Act { t: A_PLACE, a: t, b: *r, c: 1, g: id }); }
                     }
                     if !self.res_stack.is_empty() {
                         if res_ok.is_none() { res_ok = Some(!self.has_own_hill_near(x, y, pi)); }
-                        if res_ok.unwrap() { acts.push(Act { t: A_PLACE, a: t, b: *r, c: 2, g: id }); }
+                        if res_ok.unwrap() {
+                            // AI candidates: only path pieces connected to the labyrinth
+                            for ci in 0..sh.nc as usize {
+                                let m = sh.comps[ci];
+                                let conn = (0..3).any(|e| (m >> e) & 1 == 1 && { let (nx, ny, _) = neighbor(x, y, e); self.slot_at(nx, ny).is_some() });
+                                if conn { acts.push(Act { t: A_PLACE, a: t, b: *r, c: 2 + ci as u8, g: id }); }
+                            }
+                        }
                     }
                 }
             }
@@ -573,7 +590,7 @@ impl State {
                 while i < dests.len() { let n = dests[i]; if !mark[n as usize] { mark[n as usize] = true; chosen.push(n); } i += stride; }
                 for n in chosen { acts.push(Act::a1(A_MOVE, n as usize)); }
             }
-            if p.carry < 0 && cs.res >= 0 && self.last_t != A_UNLOAD { acts.push(Act::new(A_LOAD)); }
+            if p.carry < 0 && cs.res >= 0 && self.res_node(cs_slot) == node as usize && self.last_t != A_UNLOAD { acts.push(Act::new(A_LOAD)); }
             if p.carry >= 0 && cs.res < 0 && self.last_t != A_LOAD { acts.push(Act::new(A_UNLOAD)); }
             if !u[2] && p.carry < 0 {
                 for q in 0..self.n {
@@ -776,10 +793,11 @@ impl State {
                         let ao = self.cells[slot].sh.all_open;
                         self.players[pi].ant = Some(Ant { cell: slot as u8, edge: ao.trailing_zeros() as u8, free: false });
                     }
-                } else if a.c == 2 {
+                } else if a.c >= 2 {
                     let kind = self.res_stack.pop().unwrap();
                     self.resources.push(Res { kind, cell: slot as i8, carrier: -1, owner: -1, laid: self.turn_no });
                     self.cells[slot].res = self.resources.len() as i8 - 1;
+                    self.cells[slot].re = self.cells[slot].sh.comps[a.c as usize - 2].trailing_zeros() as i8;
                 }
             }
             A_MOVE => { self.move_ant(pi, a.a as usize); if self.move_trail.len() < 80 { self.move_trail.push(a.a); } }
@@ -788,18 +806,17 @@ impl State {
                 let ri = self.cells[cell].res;
                 let r = &mut self.resources[ri as usize];
                 r.carrier = pi as i8; r.cell = -1;
-                self.cells[cell].res = -1;
+                self.cells[cell].res = -1; self.cells[cell].re = -1;
                 self.players[pi].carry = ri;
-                self.free_ants_at(cell);
             }
             A_UNLOAD => {
-                let cell = self.players[pi].ant.unwrap().cell as usize;
+                let ant = self.players[pi].ant.unwrap();
+                let cell = ant.cell as usize;
                 let ri = self.players[pi].carry;
                 let r = &mut self.resources[ri as usize];
                 r.carrier = -1; r.cell = cell as i8;
-                self.cells[cell].res = ri;
+                self.cells[cell].res = ri; self.cells[cell].re = ant.edge as i8;
                 self.players[pi].carry = -1;
-                self.free_ants_at(cell);
             }
             A_FIGHT => {
                 self.used[2] = true;
@@ -857,11 +874,12 @@ impl State {
             A_WINGS => {
                 if a.b != 255 { self.removed_card(pi, a.b); self.removed_card(pi, a.c); } else { self.removed_card(pi, C_WINGS); }
                 if self.players[pi].carry >= 0 {
-                    let cell = self.players[pi].ant.unwrap().cell as usize;
+                    let ant = self.players[pi].ant.unwrap();
+                    let cell = ant.cell as usize;
                     let ri = self.players[pi].carry;
                     let r = &mut self.resources[ri as usize];
                     r.carrier = -1; r.cell = cell as i8;
-                    self.cells[cell].res = ri;
+                    self.cells[cell].res = ri; self.cells[cell].re = ant.edge as i8;
                     self.players[pi].carry = -1;
                 }
                 self.move_ant(pi, a.a as usize);

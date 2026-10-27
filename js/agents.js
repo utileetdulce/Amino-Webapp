@@ -49,7 +49,7 @@ export function heuristicScores(ctx, acts) {
       case 'decline': v = 0; break;
       case 'move': {
         const cid = Math.floor(a.to / 3);
-        const fr = ctx.freeRes.find((r) => r.cell === cid);
+        const fr = ctx.freeRes.find((r) => r.node === a.to);
         const ca = ctx.carriers.find((c) => c.cell === cid);
         if (p.carry < 0 && fr) v = 72 + fr.val;
         else if (mayAttack && ca) v = 55 + 3 * ca.val;
@@ -75,7 +75,7 @@ export function heuristicScores(ctx, acts) {
       case 'swap': v = 4; break;
       case 'wings': {
         const cid = Math.floor(a.to / 3);
-        const fr = ctx.freeRes.find((r) => r.cell === cid);
+        const fr = ctx.freeRes.find((r) => r.node === a.to);
         const ca = ctx.carriers.find((c) => c.cell === cid);
         if (p.carry < 0 && fr && !(ctx.distAnt.has(cid))) v = 58;
         else if (mayAttack && ca && !ctx.distAnt.has(cid)) v = 56;

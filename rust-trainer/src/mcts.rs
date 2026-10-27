@@ -20,7 +20,7 @@ pub static CHANCELEAF: AtomicUsize = AtomicUsize::new(0);
 /// Leaf evaluation by short heuristic rollout (`--roll N` turns, 0 = off) blended with the value net (`--roll-w`).
 pub static ROLL_TURNS: AtomicUsize = AtomicUsize::new(0);
 pub static ROLL_W_MILLI: AtomicUsize = AtomicUsize::new(500);
-#[inline] fn is_chance(a: &Act) -> bool { a.t == A_TRANSPORT || a.t == A_INC_TILES || a.t == A_INC_CARD || (a.t == A_PLACE && a.c == 2) }
+#[inline] fn is_chance(a: &Act) -> bool { a.t == A_TRANSPORT || a.t == A_INC_TILES || a.t == A_INC_CARD || (a.t == A_PLACE && a.c >= 2) }
 
 struct Child { act: Act, n: u32, w: f64, p: f32, node: u32 }
 struct Node { n: u32, w: f64, expanded: bool, children: Vec<Child> }

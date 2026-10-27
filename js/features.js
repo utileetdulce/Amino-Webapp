@@ -1,5 +1,5 @@
 // Feature extraction for the neural agents and the heuristic bot.
-import { antNode, antStarts, bfs, hillCells, nodeCell, score, hasCard, TILE_TYPES } from './engine.js';
+import { antNode, antStarts, bfs, hillCells, nodeCell, score, hasCard, resNode, TILE_TYPES } from './engine.js';
 import { cellX, cellY, cellCenter, neighborId, neighbor, cellId } from './geometry.js';
 
 export const ACTION_TYPES = ['inc_tiles', 'inc_card', 'inc_hill', 'swap', 'place', 'move', 'load', 'unload', 'fight', 'transport',
@@ -33,7 +33,7 @@ export function buildCtx(s, pi) {
   const freeRes = [];
   for (let i = 0; i < s.resources.length; i++) {
     const r = s.resources[i];
-    if (r.owner < 0 && r.carrier < 0 && r.cell >= 0) freeRes.push({ idx: i, cell: r.cell, val: p.values[r.kind] });
+    if (r.owner < 0 && r.carrier < 0 && r.cell >= 0) freeRes.push({ idx: i, cell: r.cell, node: resNode(s.cells[r.cell]), val: p.values[r.kind] });
   }
   const carriers = [];
   const enemyPos = [];

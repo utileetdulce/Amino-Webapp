@@ -39,7 +39,7 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
             A_DECLINE => 0.0,
             A_MOVE => {
                 let cid = a.a as usize / 3;
-                let fr = ctx.free_res.iter().find(|r| r.cell as usize == cid);
+                let fr = ctx.free_res.iter().find(|r| r.node == a.a);
                 let ca = ctx.carriers.iter().find(|c| c.cell as usize == cid);
                 if p.carry < 0 && fr.is_some() { 72.0 + fr.unwrap().val as f64 }
                 else if may_attack && ca.is_some() { 55.0 + 3.0 * ca.unwrap().val as f64 }
@@ -54,7 +54,7 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
                 action_numeric(s, ctx, *a, &mut f, 0);
                 let (reach, d_ant, to_res) = (f[10] as f64, f[2] as f64, f[11] as f64);
                 if a.c == 1 { if hills_placed == 0 { 90.0 } else if !ctx.free_res.is_empty() { 30.0 + 6.0 * (1.0 - to_res) } else { 22.0 } }
-                else if a.c == 2 { if p.ant.is_some() { 52.0 + 14.0 * reach - 10.0 * d_ant } else { 0.0 } }
+                else if a.c >= 2 { if p.ant.is_some() { 52.0 + 14.0 * reach - 10.0 * d_ant } else { 0.0 } }
                 else { (if hand_n > 2 { 22.0 } else { 12.0 }) + 6.0 * reach + 6.0 * (1.0 - to_res) }
             }
             A_INC_TILES => if hand_n <= 1 { 68.0 } else if hand_n <= 3 { 40.0 } else { 28.0 },
@@ -63,7 +63,7 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
             A_SWAP => 4.0,
             A_WINGS => {
                 let cid = a.a as usize / 3;
-                let fr = ctx.free_res.iter().find(|r| r.cell as usize == cid);
+                let fr = ctx.free_res.iter().find(|r| r.node == a.a);
                 let ca = ctx.carriers.iter().find(|c| c.cell as usize == cid);
                 let in_reach = ctx.dist_ant[cid] >= 0;
                 if p.carry < 0 && fr.is_some() && !in_reach { 58.0 }

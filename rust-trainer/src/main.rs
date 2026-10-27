@@ -535,7 +535,7 @@ fn probe(path: &str, sims: usize, games: usize, round: i32) {
             }).collect();
             let gt = if np > 0 { format!("   playouts: outcome {:+.2}, rounds {:.0}", outs.iter().map(|o| o.0).sum::<f64>() / np as f64, outs.iter().map(|o| o.1).sum::<f64>() / np as f64) } else { String::new() };
             if std::env::var("PROBE_REP").is_ok() && np == 0 { continue; }
-            println!("   {:<10}{} prior {:.3} visits {:>4} Q {:+.3}   v(after) {:+.3}{}", ANAMES[a.t as usize], if a.t == engine::A_PLACE { ["", " tile", " +hill", " +res"][a.c as usize + 1] } else { "" }, r.prior[i], r.visits[i], r.q[i], acc / 16.0, gt);
+            println!("   {:<10}{} prior {:.3} visits {:>4} Q {:+.3}   v(after) {:+.3}{}", ANAMES[a.t as usize], if a.t == engine::A_PLACE { ["", " tile", " +hill", " +res"][a.c.min(2) as usize + 1] } else { "" }, r.prior[i], r.visits[i], r.q[i], acc / 16.0, gt);
         }
         if std::env::var("PROBE_AFTER_TILES").is_ok() {
             // one level deeper: after drawing tiles, what does the net want? (prior mass per action type, top candidates)

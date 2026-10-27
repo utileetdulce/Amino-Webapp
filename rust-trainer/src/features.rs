@@ -8,7 +8,7 @@ pub const AF: usize = NT + NUM_AF;
 pub const SF: usize = 41;
 
 #[derive(Clone, Copy, Default)]
-pub struct Fr { pub cell: u8, pub val: u8 }
+pub struct Fr { pub cell: u8, pub val: u8, pub node: u8 }
 
 pub struct Ctx {
     pub pi: usize, pub ant_cell: i32,
@@ -50,7 +50,7 @@ pub fn build_ctx(s: &State, pi: usize) -> Ctx {
     } else { [-1; 64] };
     let mut free_res: FV<Fr, 12> = FV::new();
     for r in s.resources.iter() {
-        if r.owner < 0 && r.carrier < 0 && r.cell >= 0 { free_res.push(Fr { cell: r.cell as u8, val: p.values[r.kind as usize] }); }
+        if r.owner < 0 && r.carrier < 0 && r.cell >= 0 { free_res.push(Fr { cell: r.cell as u8, val: p.values[r.kind as usize], node: s.res_node(r.cell as usize) as u8 }); }
     }
     let mut carriers: FV<Fr, 6> = FV::new();
     let mut enemy_pos: FV<u8, 16> = FV::new();
@@ -60,7 +60,7 @@ pub fn build_ctx(s: &State, pi: usize) -> Ctx {
             enemy_pos.push(qa.cell);
             if s.players[q].carry >= 0 {
                 let kind = s.resources[s.players[q].carry as usize].kind;
-                carriers.push(Fr { cell: qa.cell, val: p.values[kind as usize] });
+                carriers.push(Fr { cell: qa.cell, val: p.values[kind as usize], node: 0 });
             }
         }
         for h in s.hill_cells(q).iter() { enemy_pos.push(*h); }
@@ -157,7 +157,7 @@ pub fn action_numeric(s: &State, ctx: &Ctx, a: Act, out: &mut [f32], off: usize)
         A_PLACE => {
             let (x, y) = (gx(a.g as i32), gy(a.g as i32));
             out[off + 7] = if a.c == 1 { 1.0 } else { 0.0 };
-            out[off + 8] = if a.c == 2 { 1.0 } else { 0.0 };
+            out[off + 8] = if a.c >= 2 { 1.0 } else { 0.0 };
             out[off + 13] = open_sum(a.a as usize) as f32;
             out[off + 14] = (TILE_GROUPS_LEN[a.a as usize] as f64 / 3.0) as f32;
             let mut conn = 0; let mut reach = 0; let mut best_d = 99;
@@ -267,7 +267,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
     let carry_val = if p.carry >= 0 { p.values[s.resources[p.carry as usize].kind as usize] as f32 / 3.0 } else { 0.0 };
     for cid in 0..nc {
         let c = &s.cells[cid];
-        let fr = ctx.free_res.iter().find(|r| r.cell as usize == cid).map_or(0.0, |r| r.val as f32 / 3.0);
+        let fr_res = ctx.free_res.iter().find(|r| r.cell as usize == cid);
         let ca = ctx.carriers.iter().find(|r| r.cell as usize == cid).map_or(0.0, |r| r.val as f32 / 3.0);
         let da = ctx.dist_ant[cid]; let dh = ctx.dist_hill[cid];
         let foe_here = foe_cells.iter().any(|&f| f as usize == cid);
@@ -280,7 +280,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
             f[4] = c.ncomps() as f32 / 3.0;
             f[5] = if c.hill == pi as i8 { 1.0 } else { 0.0 };
             f[6] = if c.hill >= 0 && c.hill != pi as i8 { 1.0 } else { 0.0 };
-            f[7] = fr;
+            f[7] = fr_res.map_or(0.0, |r| if r.node as usize == cid * 3 + ci { r.val as f32 / 3.0 } else { 0.0 });
             f[8] = if c.block >= 0 { 1.0 } else { 0.0 };
             f[9] = if c.bridge > 0 { 1.0 } else { 0.0 };
             f[10] = if node as i32 == ant_node { 1.0 } else { 0.0 };
@@ -325,12 +325,12 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
     for &fnode in foe_nodes.iter() { rflags[region[fnode as usize] as usize] |= R_FOE; }
     for cid in 0..nc {
         let c = &s.cells[cid];
-        let free_here = ctx.free_res.iter().any(|r| r.cell as usize == cid);
+        let fr = ctx.free_res.iter().find(|r| r.cell as usize == cid);
         for ci in 0..c.ncomps() {
             let r = region[g.base[cid] as usize + ci] as usize;
             if c.hill == pi as i8 { rflags[r] |= R_MYH; }
             if c.hill >= 0 && c.hill != pi as i8 { rflags[r] |= R_EH; }
-            if free_here { rflags[r] |= R_FREE; }
+            if fr.map_or(false, |f| f.node as usize == cid * 3 + ci) { rflags[r] |= R_FREE; }
         }
     }
     // --- v2: enemy reach / enemy hill distances (cell minimum over all enemies, each with its own bridges)
@@ -393,7 +393,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
         let cid = r.cell as usize;
         if ctx.dist_ant[cid] >= 0 { dm = dm.min(ctx.dist_ant[cid] as i32); nm += 1; }
         if dist_foe[cid] >= 0 { df = df.min(dist_foe[cid] as i32); nfo += 1; }
-        if ant_node >= 0 && region[g.base[cid] as usize] == region[ant_node as usize] { nreg_free += 1; }
+        if ant_node >= 0 && region[g.base[cid] as usize + (r.node as usize - cid * 3)] == region[ant_node as usize] { nreg_free += 1; }
     }
     gx[8] = ((df - dm) as f32 / 14.0).clamp(-1.0, 1.0);
     gx[9] = nm as f32 / 4.0; gx[10] = nfo as f32 / 4.0;

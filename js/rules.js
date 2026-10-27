@@ -8,8 +8,8 @@ Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Re
 <ul>
 <li><b>Einkommen (1×):</b> 4 Dreiecke <i>oder</i> 1 Ameisenkarte <i>oder</i> einen gelegten Hügel zurück auf die Hand.</li>
 <li><b>Dreieck tauschen (1×):</b> beliebiges Dreieck gegen eines aus der Hand eines Gegners.</li>
-<li><b>Dreiecke legen:</b> beliebig viele. Wege müssen fortgesetzt werden, offene Kanten dürfen nicht an geschlossene stoßen. Zusammen mit einem Dreieck kannst du einen <b>Hügel</b> (ab dem ersten erscheint deine Ameise) oder eine <b>Ressource</b> legen. Zwischen deinem Hügel und jeder Ressource müssen mindestens 2 Dreiecke Platz haben (gegnerische Hügel zählen nicht).</li>
-<li><b>Ameise bewegen:</b> beliebig weit, wohin Wege führen; mit zwei Hügeln auch unterirdisch dazwischen. Trägt höchstens eine Ressource; auf-/abladen jederzeit. <b>Trägt die Ameise eine Ressource, bewegt sie sich ausschließlich per Transport (Würfelwurf) – ohne Ausnahme.</b></li>
+<li><b>Dreiecke legen:</b> beliebig viele. Wege müssen fortgesetzt werden, offene Kanten dürfen nicht an geschlossene stoßen. Zusammen mit einem Dreieck kannst du einen <b>Hügel</b> (ab dem ersten erscheint deine Ameise) oder eine <b>Ressource</b> legen. Zwischen deinem Hügel und jeder Ressource müssen mindestens 2 Dreiecke Platz haben (gegnerische Hügel zählen nicht) – das gilt beim Legen einer Ressource wie beim Bau eines Hügels, auch gegenüber einer Ressource, die gerade getragen wird. Eine Ressource liegt auf <i>einem</i> Wegstück ihres Dreiecks; bei getrennten Wegen kannst du wählen, auf welchem.</li>
+<li><b>Ameise bewegen:</b> beliebig weit, wohin Wege führen; mit zwei Hügeln auch unterirdisch dazwischen. Trägt höchstens eine Ressource; auf-/abladen jederzeit – zum Aufladen muss sie auf dem Wegstück der Ressource stehen. <b>Trägt die Ameise eine Ressource, bewegt sie sich ausschließlich per Transport (Würfelwurf) – ohne Ausnahme.</b></li>
 <li><b>Kampf (1×):</b> Steht deine Ameise (ohne Last) auf dem Feld einer Ameise mit Ressource, verbirgt der Verteidiger die Ressource in einer Faust; der Angreifer tippt. Treffer = Ressource gehört dir.</li>
 <li><b>Transport (1×):</b> Würfle (0–5); so viele Dreiecke darfst du die getragene Ressource Richtung Hügel bringen. Im Hügel angekommen zählt sie sofort. Nicht erlaubt für Ressourcen, die du in diesem Zug gelegt hast.</li>
 </ul>
@@ -25,5 +25,5 @@ Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Re
 <h3>Bedienung</h3>
 <p>Dreieck in der Hand anklicken, mit <kbd>R</kbd> / Rechtsklick drehen, auf ein hervorgehobenes Feld klicken. Brett: ziehen = verschieben, Mausrad = Zoom.</p>
 <h3>Abweichungen von der Tabletop-Vorlage</h3>
-<p>Die genauen Wege-Muster der sechs Dreieckstypen sind in dieser Umsetzung nachempfunden (Y-Kreuzung, Kurve, Sackgasse, Gabel mit Stummel, zwei bzw. drei getrennte Stummel). Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel/Ressourcen-Felder verbinden alle ihre Wege; Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
+<p>Die genauen Wege-Muster der sechs Dreieckstypen sind in dieser Umsetzung nachempfunden (Y-Kreuzung, Kurve, Sackgasse, Gabel mit Stummel, zwei bzw. drei getrennte Stummel). Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel-Felder verbinden alle ihre Wege (eine Ressource dagegen nicht); Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
 </div>`;

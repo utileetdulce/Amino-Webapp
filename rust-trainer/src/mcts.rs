@@ -58,13 +58,26 @@ pub fn determinize(s: &mut State, observer: usize, rng: &mut Rng) {
     s.seed = (rng.u64() >> 33) as i32;
 }
 
-pub fn cap_deterministic(acts: Vec<Act>, max: usize) -> Vec<Act> {
+/// Deterministic candidate cap: keep structural actions; of the placements keep the most relevant ones first (see
+/// State::placement_tiers, at most 3/4 of the room) and thin out the rest evenly.
+pub fn cap_deterministic(acts: Vec<Act>, max: usize, s: &State) -> Vec<Act> {
     if acts.len() <= max { return acts; }
     let mut keep = Vec::with_capacity(max); let mut bulk = Vec::with_capacity(acts.len());
     for a in acts { if a.t == A_PLACE || a.t == A_OVERLAY { bulk.push(a); } else { keep.push(a); } }
     let room = std::cmp::max(4, max.saturating_sub(keep.len()));
     if bulk.len() <= room { keep.extend(bulk); return keep; }
-    for i in 0..room { keep.push(bulk[(i * bulk.len()) / room]); }
+    let tiers = s.placement_tiers(&bulk);
+    let mut order: Vec<usize> = (0..bulk.len()).filter(|&i| tiers[i].0 > 0).collect();
+    order.sort_by(|&i, &j| tiers[j].0.cmp(&tiers[i].0).then(tiers[i].1.cmp(&tiers[j].1)).then(i.cmp(&j)));
+    order.truncate(room - room / 4);
+    let mut taken = vec![false; bulk.len()];
+    for &i in &order { taken[i] = true; }
+    let rest: Vec<usize> = (0..bulk.len()).filter(|&i| !taken[i]).collect();
+    let k = room - order.len();
+    let mut pick = order;
+    for i in 0..k { pick.push(rest[(i * rest.len()) / k]); }
+    pick.sort();
+    for i in pick { keep.push(bulk[i]); }
     keep
 }
 
@@ -157,7 +170,7 @@ impl<'a> Mcts<'a> {
                 value = if s.actor() == observer { v as f64 } else { -(v as f64) };
                 break;
             }
-            acts = cap_deterministic(acts, self.max_cands);
+            acts = cap_deterministic(acts, self.max_cands, s);
             if !nodes[node].expanded {
                 let (v, pr) = self.evaluate(s, &acts, true);
                 // keep the top-k candidates by prior (plus "end turn" so a turn can always be finished)

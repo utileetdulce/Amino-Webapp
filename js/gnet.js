@@ -4,15 +4,31 @@
 //   h0 = relu(x Win + b); per layer: h += relu(b + h Wself + sum_e h[nbr_e] We[e]);
 //   state input = [41 state features, mean node embedding, own ant embedding, enemy ant embedding, (v2) global extras];
 //   candidate input additionally gets the mean embedding of the nodes the action targets and (v2) placement/transport extras.
-// Feature version fv: 1 = 20 node features; 2 adds enemy reach, regions, frontier, global extras and candidate extras.
+// Feature version fv: 1 = 20 node features; 2 adds enemy reach, regions, frontier, global extras and candidate extras;
+// 3 adds "is my ant cut off?" (global) and a one-action lookahead per candidate (does it reconnect the ant with a hill?).
 import { SF, AF } from './features.js';
 import { cellX, cellY, isUp, neighborId, neighbor } from './geometry.js';
-import { compsOf, bfs, antStarts, hillCells, nodeCell, makeCellShape } from './engine.js';
+import { compsOf, bfs, antStarts, hillCells, nodeCell, makeCellShape, resNode, hasCard, fastClone, applyAction } from './engine.js';
 
-export const NF = 20, NF2 = 32, GXN = 14, CXN = 17;
+export const NF = 20, NF2 = 32, GXN = 14, CXN = 17, GXN3 = 24, CXN3 = 21;
 const EXTK = 3;
 const R_ANT = 1, R_FOE = 2, R_MYH = 4, R_EH = 8, R_FREE = 16;
-const nfOf = (a) => (a.fv >= 2 ? NF2 : NF), gxnOf = (a) => (a.fv >= 2 ? GXN : 0), cxnOf = (a) => (a.fv >= 2 ? CXN : 0);
+const nfOf = (a) => (a.fv >= 2 ? NF2 : NF), gxnOf = (a) => (a.fv >= 3 ? GXN3 : a.fv >= 2 ? GXN : 0), cxnOf = (a) => (a.fv >= 3 ? CXN3 : a.fv >= 2 ? CXN : 0);
+// actions whose effect on the ant's connections is looked ahead (fv 3)
+const LOOK = new Set(['place', 'bridge', 'overlay', 'inc_hill', 'wings', 'move', 'tmove']);
+
+// where player pi's ant can get to: any own hill (paths, bridges, tunnels), transport distance to the nearest own hill
+// (no tunnels; 99 = none), any free resource
+function reachInfo(s, pi) {
+  const p = s.players[pi];
+  if (!p.ant) return { any: false, td: 99, free: false, a: null };
+  const st = antStarts(s, pi);
+  const a = bfs(s, pi, st), t = bfs(s, pi, st, { underground: false });
+  let any = false, td = 99;
+  for (const h of hillCells(s, pi)) { const n = h * 3; if (a.has(n)) any = true; if (t.has(n)) td = Math.min(td, t.get(n)); }
+  const free = s.resources.some((r) => r.owner < 0 && r.carrier < 0 && r.cell >= 0 && a.has(resNode(s.cells[r.cell])));
+  return { any, td, free, a };
+}
 
 function layout(a) {
   const { h1, h2, hv, hg, gl } = a;
@@ -115,9 +131,12 @@ export class GNet {
     }
     const g = { n, nf, x, nbr, ant: antNode, foe, cand: null, gx: null, cx: null, region: null, rflags: null, base };
     if (v2) this.addV2(g, ctx, ids, foeNodes);
+    const cxn = cxnOf(this.arch), v3 = this.arch.fv >= 3;
+    const r0 = v3 ? reachInfo(s, pi) : null;
+    if (v3) this.addV3(g, ctx, r0);
     // candidates
     const cellNodes = (cid, out) => { const c = s.cells[cid]; if (!c) return; const b = base.get(cid), k = compsOf(c).length; for (let i = 0; i < k; i++) out.push(b + i); };
-    g.cx = v2 ? new Float32Array(acts.length * CXN) : null;
+    g.cx = v2 ? new Float32Array(acts.length * cxn) : null;
     g.cand = acts.map((a, ci) => {
       const v = [];
       switch (a.t) {
@@ -139,7 +158,7 @@ export class GNet {
             } else if (sh.open[e]) frontier++;
           }
           if (v2) {
-            const o = ci * CXN, cxv = g.cx;
+            const o = ci * cxn, cxv = g.cx;
             for (let e = 0; e < 3; e++) cxv[o + e] = sh.open[e];
             const same = (i, j) => sh.comps.some((m) => m.includes(i) && m.includes(j));
             cxv[o + 3] = same(0, 1) ? 1 : 0; cxv[o + 4] = same(0, 2) ? 1 : 0; cxv[o + 5] = same(1, 2) ? 1 : 0;
@@ -157,13 +176,37 @@ export class GNet {
         case 'bridge': cellNodes(a.a, v); cellNodes(a.b, v); break;
         case 'blockage': case 'overlay': case 'inc_hill': cellNodes(a.cell, v); break;
         case 'transport':
-          if (v2) { const [pd, ea] = rollOdds(!!a.card, ctx.curHillDist >= 99 ? 99 : ctx.curHillDist); g.cx[ci * CXN + 15] = pd; g.cx[ci * CXN + 16] = ea; }
+          if (v2) { const [pd, ea] = rollOdds(!!a.card, ctx.curHillDist >= 99 ? 99 : ctx.curHillDist); g.cx[ci * cxn + 15] = pd; g.cx[ci * cxn + 16] = ea; }
           break;
         default: break;
+      }
+      if (v3) { // lookahead: the ant's connections after this action
+        let r1 = r0;
+        if (LOOK.has(a.t)) { const s1 = fastClone(s); applyAction(s1, a); r1 = reachInfo(s1, pi); }
+        const o = ci * cxn;
+        g.cx[o + 17] = r1.td < 99 ? Math.min(r1.td, 14) / 14 : 1;
+        g.cx[o + 18] = r1.any ? 1 : 0;
+        g.cx[o + 19] = (p.carry >= 0 ? r0.td >= 99 && r1.td < 99 : !r0.any && r1.any) ? 1 : 0;
+        g.cx[o + 20] = r1.free ? 1 : 0;
       }
       return v;
     });
     return g;
+  }
+
+  // v3 global extras: is the ant cut off, and what could change that
+  addV3(g, ctx, r) {
+    const { s, pi, p } = ctx, gx = g.gx;
+    gx[14] = r.any ? 1 : 0;
+    gx[15] = r.td < 99 ? 1 : 0;
+    gx[16] = r.td < 99 ? Math.min(r.td, 14) / 14 : 1;
+    gx[17] = g.ant >= 0 ? Math.min(g.regFront[g.region[g.ant]] / 6, 1) : 0;
+    gx[18] = r.free ? 1 : 0;
+    gx[19] = p.carry >= 0 && r.td >= 99 ? 1 : 0;
+    gx[20] = p.ant && !r.any && !r.free ? 1 : 0;
+    gx[21] = p.ant ? hillCells(s, pi).filter((h) => !r.a.has(h * 3)).length / 2 : 0;
+    gx[22] = hasCard(p, 'superimpose') ? 1 : 0;
+    gx[23] = p.cards.length >= 2 ? 1 : 0;
   }
 
   // v2: node features 20..31, regions, global extras
@@ -202,6 +245,7 @@ export class GNet {
       const hs = hillCells(s, q);
       if (hs.length) mergeMin(distEh, cellMin(bfs(s, q, hs.map((h) => h * 3), { underground: false })));
     }
+    const regFront = new Int32Array(nreg);
     const laidNow = new Set(s.resources.filter((r) => r.owner < 0 && r.carrier < 0 && r.cell >= 0 && r.laidTurn === s.turnNo).map((r) => r.cell));
     for (const cid of ids) {
       const c = s.cells[cid];
@@ -212,6 +256,7 @@ export class GNet {
         const r = region[node], fl = rflags[r];
         let frE = 0;
         for (const e of comps[ci]) { const [nid] = neighborId(cid, e); if (!s.cells[nid]) frE++; }
+        regFront[r] += frE;
         x[o + 20] = dfo !== undefined ? Math.min(dfo, 14) / 14 : 1;
         x[o + 21] = dfo !== undefined ? 1 : 0;
         x[o + 22] = deh !== undefined ? Math.min(deh, 14) / 14 : 1;
@@ -225,7 +270,7 @@ export class GNet {
     // global extras
     let fo = -1;
     for (let q = 0; q < s.n; q++) if (q !== pi) { fo = q; break; }
-    const gx = new Float32Array(GXN);
+    const gx = new Float32Array(gxnOf(this.arch));
     gx[6] = 1;
     if (fo >= 0) {
       const pq = s.players[fo];
@@ -252,7 +297,7 @@ export class GNet {
     for (const h of ctx.hs) if (distFoe.has(h)) dhMy = Math.min(dhMy, distFoe.get(h));
     gx[11] = dhMy / 14;
     gx[13] = nregFree / 4;
-    g.gx = gx; g.region = region; g.rflags = rflags;
+    g.gx = gx; g.region = region; g.rflags = rflags; g.regFront = regFront;
   }
 
   // GNN forward; returns the final node embeddings

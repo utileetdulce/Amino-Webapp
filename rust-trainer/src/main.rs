@@ -557,6 +557,53 @@ fn probe(path: &str, sims: usize, games: usize, round: i32) {
     }
 }
 
+/// `hills <games> <agentA> <agentB>`: hill placement and getting cut off. Counts hills A or B places while its ant is out,
+/// how many the ant cannot reach afterwards (paths, bridges, tunnels), hills laid while carrying (and of these within 5 steps
+/// without tunnels); episodes in which A's carrying ant has no transport path to an own hill (cut off) and how they end
+/// (reconnected while still carrying / resource dropped or lost / still cut off at the game end), their mean length in rounds;
+/// and how often each side cuts off an enemy carrier (overbuilding, blockage, ...).
+fn hills(games: usize, sa: &str, sb: &str) {
+    let mut nets = std::collections::HashMap::new();
+    for spec in [sa, sb] { let p: Vec<&str> = spec.split(':').collect(); if p.len() > 1 && !nets.contains_key(p[1]) { nets.insert(p[1].to_string(), load_net(p[1]).0); } }
+    let res: Vec<[u32; 11]> = (0..games).into_par_iter().map(|g| {
+        let mut rng = Rng::new(4242 + g as u64 * 7919);
+        let seat = g % 2;
+        let (a, b) = (parse_agent(sa, &nets), parse_agent(sb, &nets));
+        let ag = if seat == 0 { [a, b] } else { [b, a] };
+        let mut s = engine::new_game(2, (rng.u64() >> 33) as i32);
+        // [hills with ant out, unreachable, laid while carrying, carrying and within 5, episodes, reconnected, dropped, stuck at end, rounds, cuts by A, cuts by B]
+        let mut c = [0u32; 11];
+        let (mut in_ep, mut t0) = (false, 0);
+        let mut guard = 0;
+        while !s.over && guard < 200000 {
+            guard += 1;
+            let pi = s.actor();
+            let act = ag[pi].act(&s, &mut rng);
+            let had_ant = s.players[pi].ant.is_some();
+            let carrying = s.players[pi].carry >= 0;
+            let home0: Vec<i32> = (0..s.n).map(|q| if q != pi && s.players[q].carry >= 0 { s.home_dist(q) } else { 99 }).collect();
+            s.apply(act);
+            if (0..s.n).any(|q| home0[q] < 99 && s.players[q].carry >= 0 && s.home_dist(q) >= 99) { c[if pi == seat { 9 } else { 10 }] += 1; }
+            if act.t == engine::A_PLACE && act.c == 1 && had_ant {
+                c[0] += 1;
+                let slot = s.slot_at(engine::gx(act.g as i32), engine::gy(act.g as i32)).unwrap();
+                let st = s.ant_starts(pi);
+                if s.bfs(pi, st.as_slice(), 999, true).dist[slot * 3] < 0 { c[1] += 1; }
+                if carrying { c[2] += 1; let d = s.bfs(pi, st.as_slice(), 5, false).dist[slot * 3]; if d >= 0 { c[3] += 1; } }
+            }
+            let cut = s.players[seat].carry >= 0 && s.home_dist(seat) >= 99;
+            if cut && !in_ep { in_ep = true; t0 = s.turn_no; c[4] += 1; }
+            else if in_ep && !cut { in_ep = false; c[if s.players[seat].carry >= 0 { 5 } else { 6 }] += 1; c[8] += ((s.turn_no - t0) / 2) as u32; }
+        }
+        if in_ep { c[7] += 1; c[8] += ((s.turn_no - t0) / 2) as u32; }
+        c
+    }).collect();
+    let t: Vec<u32> = (0..11).map(|k| res.iter().map(|r| r[k]).sum()).collect();
+    println!("{} vs {}: hills placed with ant out {}, unreachable {} ({:.1}%), laid while carrying {}, of these within transport range {}", sa, sb, t[0], t[1], 100.0 * t[1] as f64 / t[0].max(1) as f64, t[2], t[3]);
+    println!("  A cut off with a resource: {} episodes -> reconnected {}, dropped/lost {}, stuck at game end {}; mean {:.1} rounds", t[4], t[5], t[6], t[7], t[8] as f64 / t[4].max(1) as f64);
+    println!("  enemy carriers cut off by A {}, by B {}", t[9], t[10]);
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|s| s.as_str()) == Some("abtest") {
@@ -577,6 +624,7 @@ fn main() {
     if let Ok(v) = std::env::var("AMINO_MAX_ROUNDS") { engine::MAX_ROUNDS_RT.store(v.parse().unwrap(), std::sync::atomic::Ordering::Relaxed); }
     if argv.get(1).map(|s| s.as_str()) == Some("probe") { probe(&argv[2], argv[3].parse().unwrap(), argv[4].parse().unwrap(), argv[5].parse().unwrap()); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("stall") { stall(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
+    if argv.get(1).map(|s| s.as_str()) == Some("hills") { hills(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
     if argv.get(1).map(|s| s.as_str()) == Some("bench") { bench(argv[2].parse().unwrap(), &argv[3], &argv[4]); return; }
 
     let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
@@ -639,7 +687,7 @@ fn main() {
         let v: Vec<usize> = spec.split(',').map(|x| x.parse().unwrap()).collect();
         if net.arch.hg == 0 { net = Net::grow_from(&net, v[0], v[1], &mut rng); println!("grown to graph net hg={} gl={} ({} params)", v[0], v[1], net.size()); }
     }
-    if arg("grow-features").is_some() && net.arch.hg > 0 && net.arch.fv == 1 { net = Net::grow_features(&net, &mut rng); println!("grown to graph feature version 2 ({} params)", net.size()); }
+    if arg("grow-features").is_some() && net.arch.hg > 0 && net.arch.fv < 3 { net = Net::grow_features(&net, &mut rng); println!("grown to graph feature version {} ({} params)", net.arch.fv, net.size()); }
     if lr > 1.0e-4 { println!("WARNING: lr {} is high - in our tests runs with lr >= 1e-4 drifted and ended up weaker than the start model (use <= 5e-5 and gating).", lr); }
     println!("config {}", json!({"workers": workers, "sims": sims, "games": games, "steps": steps, "batch": batch, "lr": lr, "buffer": buffer_cap,
         "evalEvery": eval_every, "evalGames": eval_games, "oppMix": opp_mix, "depth": depth, "minutes": minutes, "iters": iters, "tauMoves": tau_moves, "seed": seed}));

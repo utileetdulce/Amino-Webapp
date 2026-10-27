@@ -224,6 +224,9 @@ pub const NF: usize = 20;
 pub const NF2: usize = 32;
 pub const GXN: usize = 14;
 pub const CXN: usize = 17;
+/// Feature version 3 adds "is my ant cut off?" global extras and a one-action lookahead per candidate (see reach_info).
+pub const GXN3: usize = 24;
+pub const CXN3: usize = 21;
 
 const R_ANT: u8 = 1; const R_FOE: u8 = 2; const R_MYH: u8 = 4; const R_EH: u8 = 8; const R_FREE: u8 = 16;
 
@@ -238,11 +241,29 @@ pub struct Graph {
     pub gx: Vec<f32>,           // v2: global extras
     pub cx: Vec<f32>,           // v2: n_candidates * CXN
     pub region: Vec<u16>, pub rflags: Vec<u8>, // v2: connected component of every node, flag bits per component
+    pub fv: u8, pub reg_front: Vec<u32>,        // feature version; v3: open frontier edges per component
 }
+
+/// Where player pi's ant can get to: any own hill (paths, bridges, tunnels), transport distance to the nearest own hill
+/// (no tunnels; 99 = none), any free resource; plus the reach map (for unreachable hills).
+pub struct Reach { pub any: bool, pub td: i32, pub free: bool, pub a: Option<Bfs> }
+pub fn reach_info(s: &State, pi: usize) -> Reach {
+    if s.players[pi].ant.is_none() { return Reach { any: false, td: 99, free: false, a: None }; }
+    let st = s.ant_starts(pi);
+    let a = s.bfs(pi, st.as_slice(), 999, true);
+    let t = s.bfs(pi, st.as_slice(), 999, false);
+    let (mut any, mut td) = (false, 99);
+    for &h in s.hill_cells(pi).iter() { let n = h as usize * 3; if a.dist[n] >= 0 { any = true; } if t.dist[n] >= 0 { td = td.min(t.dist[n] as i32); } }
+    let free = s.resources.iter().any(|r| r.owner < 0 && r.carrier < 0 && r.cell >= 0 && a.dist[s.res_node(r.cell as usize)] >= 0);
+    Reach { any, td, free, a: Some(a) }
+}
+/// actions whose effect on the ant's connections is looked ahead (fv 3)
+fn looked_ahead(t: u8) -> bool { matches!(t, A_PLACE | A_BRIDGE | A_OVERLAY | A_INC_HILL | A_WINGS | A_MOVE | A_TMOVE) }
 
 fn merge_min(a: &mut [i16; 64], b: &[i16; 64]) { for i in 0..64 { if b[i] >= 0 && (a[i] < 0 || b[i] < a[i]) { a[i] = b[i]; } } }
 
-pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
+pub fn build_graph(s: &State, ctx: &Ctx, fv: usize) -> Graph {
+    let v2 = fv >= 2;
     let pi = ctx.pi;
     let p = &s.players[pi];
     let nc = s.ncells;
@@ -303,7 +324,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
             }
         }
     }
-    let mut g = Graph { n, nf, x, nbr, base, ant: ant_node, foe, cand: Vec::new(), gx: Vec::new(), cx: Vec::new(), region: Vec::new(), rflags: Vec::new() };
+    let mut g = Graph { n, nf, x, nbr, base, ant: ant_node, foe, cand: Vec::new(), gx: Vec::new(), cx: Vec::new(), region: Vec::new(), rflags: Vec::new(), fv: fv as u8, reg_front: Vec::new() };
     if !v2 { return g; }
 
     // --- v2: regions (connected components of the static path graph) and their contents
@@ -347,6 +368,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
             merge_min(&mut dist_eh, &cell_min(&s.bfs(q, &st, 999, false)));
         }
     }
+    let mut reg_front = vec![0u32; nreg as usize];
     let laid_now: Vec<usize> = s.resources.iter().filter(|r| r.owner < 0 && r.carrier < 0 && r.cell >= 0 && r.laid == s.turn_no).map(|r| r.cell as usize).collect();
     for cid in 0..nc {
         let c = &s.cells[cid];
@@ -357,6 +379,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
             let r = region[node] as usize; let fl = rflags[r];
             let mut fr_edges = 0;
             for e in 0..3 { if (mask >> e) & 1 == 1 { let (nid, _) = s.nb(cid, e); if nid.is_none() { fr_edges += 1; } } }
+            reg_front[r] += fr_edges;
             let f = &mut g.x[node * nf..(node + 1) * nf];
             f[20] = if dfo >= 0 { mn(dfo as i32, 14) as f32 / 14.0 } else { 1.0 };
             f[21] = if dfo >= 0 { 1.0 } else { 0.0 };
@@ -374,7 +397,7 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
     }
     // --- v2: global extras
     let fo = (0..s.n).find(|&q| q != pi);
-    let mut gx = vec![0f32; GXN];
+    let mut gx = vec![0f32; if fv >= 3 { GXN3 } else { GXN }];
     if let Some(q) = fo {
         let pq = &s.players[q];
         gx[0] = mn(pq.hand.len() as i32, 12) as f32 / 8.0;
@@ -401,8 +424,25 @@ pub fn build_graph(s: &State, ctx: &Ctx, v2: bool) -> Graph {
     for h in ctx.hs.iter() { let d = dist_foe[*h as usize]; if d >= 0 { dh_my = dh_my.min(d as i32); } }
     gx[11] = dh_my as f32 / 14.0;
     gx[13] = nreg_free as f32 / 4.0;
-    g.gx = gx; g.region = region; g.rflags = rflags;
+    g.gx = gx; g.region = region; g.rflags = rflags; g.reg_front = reg_front;
     g
+}
+
+/// v3 global extras: is the ant cut off, and what could change that
+fn add_v3(g: &mut Graph, s: &State, pi: usize, r: &Reach) {
+    let p = &s.players[pi];
+    let b = |x: bool| if x { 1.0 } else { 0.0 };
+    let gx = &mut g.gx;
+    gx[14] = b(r.any);
+    gx[15] = b(r.td < 99);
+    gx[16] = if r.td < 99 { mn(r.td, 14) as f32 / 14.0 } else { 1.0 };
+    gx[17] = if g.ant >= 0 { (g.reg_front[g.region[g.ant as usize] as usize] as f32 / 6.0).min(1.0) } else { 0.0 };
+    gx[18] = b(r.free);
+    gx[19] = b(p.carry >= 0 && r.td >= 99);
+    gx[20] = b(p.ant.is_some() && !r.any && !r.free);
+    gx[21] = match &r.a { Some(a) => s.hill_cells(pi).iter().filter(|&&h| a.dist[h as usize * 3] < 0).count() as f32 / 2.0, None => 0.0 };
+    gx[22] = b(p.has_card(C_SUPER));
+    gx[23] = b(p.cards.len() >= 2);
 }
 
 fn cell_nodes(g: &Graph, s: &State, cid: usize, out: &mut Vec<u16>) {
@@ -425,7 +465,11 @@ fn roll_odds(two: bool, d: i32) -> (f32, f32) {
 pub fn attach_candidates(g: &mut Graph, s: &State, ctx: &Ctx, acts: &[Act]) {
     g.cand.clear();
     let v2 = g.nf == NF2;
-    g.cx = if v2 { vec![0f32; acts.len() * CXN] } else { Vec::new() };
+    let v3 = g.fv >= 3;
+    let cxn = if v3 { CXN3 } else { CXN };
+    g.cx = if v2 { vec![0f32; acts.len() * cxn] } else { Vec::new() };
+    let r0 = if v3 { Some(reach_info(s, ctx.pi)) } else { None };
+    if let Some(r) = &r0 { add_v3(g, s, ctx.pi, r); }
     for (ci, a) in acts.iter().enumerate() {
         let mut v: Vec<u16> = Vec::new();
         match a.t {
@@ -450,7 +494,7 @@ pub fn attach_candidates(g: &mut Graph, s: &State, ctx: &Ctx, acts: &[Act]) {
                     }
                 }
                 if v2 {
-                    let cx = &mut g.cx[ci * CXN..(ci + 1) * CXN];
+                    let cx = &mut g.cx[ci * cxn..(ci + 1) * cxn];
                     for e in 0..3 { cx[e] = sh.open[e] as f32; }
                     let same = |i: usize, j: usize| (0..sh.nc as usize).any(|k| (sh.comps[k] >> i) & 1 == 1 && (sh.comps[k] >> j) & 1 == 1);
                     cx[3] = if same(0, 1) { 1.0 } else { 0.0 }; cx[4] = if same(0, 2) { 1.0 } else { 0.0 }; cx[5] = if same(1, 2) { 1.0 } else { 0.0 };
@@ -470,10 +514,19 @@ pub fn attach_candidates(g: &mut Graph, s: &State, ctx: &Ctx, acts: &[Act]) {
                 if v2 {
                     let d = if ctx.cur_hill_dist >= 99 { 99 } else { ctx.cur_hill_dist };
                     let (pd, ea) = roll_odds(a.a == 1, d);
-                    g.cx[ci * CXN + 15] = pd; g.cx[ci * CXN + 16] = ea;
+                    g.cx[ci * cxn + 15] = pd; g.cx[ci * cxn + 16] = ea;
                 }
             }
             _ => {}
+        }
+        if let Some(r0) = &r0 { // lookahead: the ant's connections after this action
+            let r1 = if looked_ahead(a.t) { let mut s1 = *s; s1.apply(*a); reach_info(&s1, ctx.pi) } else { Reach { any: r0.any, td: r0.td, free: r0.free, a: None } };
+            let o = ci * cxn;
+            g.cx[o + 17] = if r1.td < 99 { mn(r1.td, 14) as f32 / 14.0 } else { 1.0 };
+            g.cx[o + 18] = if r1.any { 1.0 } else { 0.0 };
+            let carrying = s.players[ctx.pi].carry >= 0;
+            g.cx[o + 19] = if (carrying && r0.td >= 99 && r1.td < 99) || (!carrying && !r0.any && r1.any) { 1.0 } else { 0.0 };
+            g.cx[o + 20] = if r1.free { 1.0 } else { 0.0 };
         }
         g.cand.push(v);
     }
@@ -486,6 +539,6 @@ pub fn make_obs(s: &State, ctx: &Ctx, acts: &[Act], gv: usize) -> Obs {
     let mut sf = [0f32; SF];
     state_features(s, ctx, &mut sf);
     let a = candidate_matrix(s, ctx, acts);
-    let g = if gv > 0 { let mut g = build_graph(s, ctx, gv >= 2); attach_candidates(&mut g, s, ctx, acts); Some(g) } else { None };
+    let g = if gv > 0 { let mut g = build_graph(s, ctx, gv); attach_candidates(&mut g, s, ctx, acts); Some(g) } else { None };
     Obs { s: sf, a, n: acts.len(), g }
 }

@@ -16,7 +16,7 @@ export const KINDS = ['Blume', 'Pilz', 'Raupe'];
 export const WIN_POINTS = 7;
 
 // Bump RULES_VERSION whenever game rules / action generation change in a way that makes older trained weights "stale".
-export const RULES_VERSION = 6;
+export const RULES_VERSION = 7;
 export const MAX_AI_CARDS = 5; // AI candidate generation: no more card income at this many cards
 export const RULES_CHANGELOG = [
   { v: 1, date: '2026-10-20', text: 'Erste Regelumsetzung' },
@@ -25,6 +25,7 @@ export const RULES_CHANGELOG = [
   { v: 4, date: '2026-10-23', text: 'KI-Kandidaten ohne Schleifen (kein Zurück auf besuchte Knoten, kein Laden↔Abladen)' },
   { v: 5, date: '2026-10-24', text: 'KI-Kandidaten: mit leerer Hand nur Dreiecke als Einkommen, höchstens 5 Karten horten (verhindert Stillstand ohne Ausbau)' },
   { v: 6, date: '2026-10-27', text: 'Abstandsregel beim Hügelbau zählt auch getragene Ressourcen; eine Ressource liegt auf genau einem Wegstück ihres Dreiecks (verbindet getrennte Wege nicht mehr)' },
+  { v: 7, date: '2026-10-28', text: 'KI-Kandidaten: ein weiterer Hügel nur dort, wo die eigene Ameise ihn erreicht (sonst nur per Tunnel); bei vielen Lege-Möglichkeiten zuerst die, die die Ameise wieder mit dem Hügel verbinden oder nahe der Ameise liegen' },
 ];
 export const MAX_ACTIONS = 70;
 export const MAX_ROUNDS = 90;
@@ -347,12 +348,32 @@ function rotsUnique(x, y, tile) {
   return out;
 }
 
-// full: a resource may go on any path piece; AI candidates only use pieces connected to the labyrinth
+// edges e of shape sh at cell id whose neighbour path node is in `nodes` (Map node -> dist): [[e, dist], ...]
+function touching(s, id, sh, nodes) {
+  const out = [];
+  for (let e = 0; e < 3; e++) {
+    if (!sh.open[e]) continue;
+    const [nid, ne] = neighborId(id, e);
+    const nc = s.cells[nid];
+    if (!nc || !nc.open[ne]) continue;
+    const n = nid * 3 + compIndex(nc, ne);
+    if (nodes.has(n)) out.push([e, nodes.get(n)]);
+  }
+  return out;
+}
+
+// full: a resource may go on any path piece; AI candidates only use pieces connected to the labyrinth, and a further hill only
+// where the own ant can reach it (by paths or, when the ant reaches one of its hills, by tunnel)
 export function placementActions(s, pi, full = true) {
   const p = s.players[pi];
   const acts = [];
   const tiles = uniq(p.hand);
   if (!tiles.length) return acts;
+  let reach = null, tunnel = false;
+  if (!full && p.ant && p.hillsInHand > 0) {
+    reach = bfs(s, pi, antStarts(s, pi));
+    tunnel = hillCells(s, pi).some((h) => reach.has(h * 3));
+  }
   for (const id of frontierCells(s)) {
     const x = cellX(id), y = cellY(id);
     let hillOk = null, resOk = null;
@@ -362,7 +383,7 @@ export function placementActions(s, pi, full = true) {
         acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 0 });
         if (p.hillsInHand > 0) {
           if (hillOk === null) hillOk = !resNear(s, id);
-          if (hillOk) acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 1 });
+          if (hillOk && (!reach || tunnel || touching(s, id, sh, reach).length)) acts.push({ t: 'place', cell: id, tile: t, rot: r, piece: 1 });
         }
         if (s.resStack.length > 0) {
           if (resOk === null) resOk = !hasOwnHillNear(s, id, pi);
@@ -372,6 +393,62 @@ export function placementActions(s, pi, full = true) {
     }
   }
   return acts;
+}
+
+// Priority of placement candidates when the search has to thin them out: [tier, dist] per action (higher tier first, then nearer).
+// 4: reconnects an ant that is cut off from its hills (one path piece touches both), 3: hill the ant reaches,
+// 2: resource the ant reaches, 1: tile next to the ant's paths, 0: anything else (overlays too). Without an ant: hills first.
+export function placementTiers(s, acts) {
+  const pi = actor(s), p = s.players[pi];
+  if (!p.ant) return acts.map((a) => [a.t === 'place' && a.piece === 1 ? 3 : 0, 0]);
+  const reach = bfs(s, pi, antStarts(s, pi));
+  const hs = hillCells(s, pi);
+  const hd = hs.length ? bfs(s, pi, hs.map((h) => h * 3), { underground: false }) : new Map();
+  const cutOff = !hd.has(antNode(s, pi));
+  return acts.map((a) => {
+    if (a.t !== 'place') return [0, 0];
+    const sh = makeCellShape(cellX(a.cell), cellY(a.cell), a.tile, a.rot);
+    const ta = touching(s, a.cell, sh, reach);
+    if (!ta.length) return [0, 0];
+    const d = Math.min(...ta.map((t) => t[1])) + 1;
+    if (cutOff && hd.size) {
+      const th = touching(s, a.cell, sh, hd);
+      const groups = a.piece === 1 ? [sh.allOpen] : sh.comps;
+      if (groups.some((g) => ta.some((t) => g.includes(t[0])) && th.some((t) => g.includes(t[0])))) return [4, d];
+    }
+    return [a.piece === 1 ? 3 : a.piece === 2 ? 2 : 1, d];
+  });
+}
+
+// transport distance of player q's ant to q's nearest hill (no tunnels; 99 = none)
+export function homeDist(s, q) {
+  if (!s.players[q].ant) return 99;
+  const t = bfs(s, q, antStarts(s, q), { underground: false });
+  let d = 99;
+  for (const h of hillCells(s, q)) if (t.has(h * 3)) d = Math.min(d, t.get(h * 3));
+  return d;
+}
+
+// For a carrying ant without a transport path: transport reach of the ant and of the own hills (no tunnels)
+export function reconnectInfo(s, pi) {
+  const hs = hillCells(s, pi);
+  return { ra: bfs(s, pi, antStarts(s, pi), { underground: false }), hd: hs.length ? bfs(s, pi, hs.map((h) => h * 3), { underground: false }) : new Map() };
+}
+// does placement / bridge `a` join the ant's paths with a hill's paths?
+export function reconnects(s, info, a) {
+  if (!info.hd.size) return false;
+  if (a.t === 'place') {
+    const sh = makeCellShape(cellX(a.cell), cellY(a.cell), a.tile, a.rot);
+    const ta = touching(s, a.cell, sh, info.ra), th = touching(s, a.cell, sh, info.hd);
+    const groups = a.piece === 1 ? [sh.allOpen] : sh.comps;
+    return groups.some((g) => ta.some((t) => g.includes(t[0])) && th.some((t) => g.includes(t[0])));
+  }
+  if (a.t === 'bridge') {
+    const A = nodesOfCell(s, a.a), B = nodesOfCell(s, a.b);
+    const inR = (ns) => ns.some((n) => info.ra.has(n)), inH = (ns) => ns.some((n) => info.hd.has(n));
+    return (inR(A) && inH(B)) || (inR(B) && inH(A));
+  }
+  return false;
 }
 
 function overlayable(s, c) {

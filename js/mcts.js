@@ -3,7 +3,7 @@
 // Hidden information (opponent ant cards, stacks, a defender's hidden fist) is handled by determinization:
 // every simulation starts from a fresh random world that is consistent with what the searching player knows.
 // Dice / resource draws are re-sampled each simulation (open-loop tree keyed by action sequence).
-import { actor, applyAction, legalActions, fastClone, actionKey } from './engine.js';
+import { actor, applyAction, legalActions, fastClone, actionKey, placementTiers } from './engine.js';
 import { buildCtx, stateFeatures, candidateMatrix } from './features.js';
 import { softmax } from './nn.js';
 
@@ -26,16 +26,25 @@ export function determinize(s, observer) {
   return s;
 }
 
-// deterministic candidate cap: keep structural actions, thin out placements evenly
-export function capDeterministic(acts, max) {
+// deterministic candidate cap: keep structural actions; of the placements keep the most relevant ones first (see placementTiers,
+// at most 3/4 of the room) and thin out the rest evenly
+export function capDeterministic(acts, max, s) {
   if (acts.length <= max) return acts;
   const keep = [], bulk = [];
   for (const a of acts) (a.t === 'place' || a.t === 'overlay' ? bulk : keep).push(a);
   const room = Math.max(4, max - keep.length);
   if (bulk.length <= room) return keep.concat(bulk);
-  const out = [];
-  for (let i = 0; i < room; i++) out.push(bulk[Math.floor((i * bulk.length) / room)]);
-  return keep.concat(out);
+  const tiers = placementTiers(s, bulk);
+  const order = bulk.map((_, i) => i).filter((i) => tiers[i][0] > 0)
+    .sort((i, j) => tiers[j][0] - tiers[i][0] || tiers[i][1] - tiers[j][1] || i - j);
+  const top = order.slice(0, room - Math.floor(room / 4));
+  const taken = new Set(top);
+  const rest = bulk.map((_, i) => i).filter((i) => !taken.has(i));
+  const k = room - top.length;
+  const pick = top.slice();
+  for (let i = 0; i < k; i++) pick.push(rest[Math.floor((i * rest.length) / k)]);
+  pick.sort((i, j) => i - j);
+  return keep.concat(pick.map((i) => bulk[i]));
 }
 
 function gammaSample(k) { // Marsaglia–Tsang, k >= 1 not required (boost for k < 1)
@@ -64,7 +73,7 @@ export class MCTS {
     Object.assign(this, { net, sims, cpuct, maxDepth, maxCands, topK, timeMs, dirichlet, dirAlpha, fpu });
   }
 
-  candidates(s) { return capDeterministic(legalActions(s, false), this.maxCands); }
+  candidates(s) { return capDeterministic(legalActions(s, false), this.maxCands, s); }
 
   // value of state s from the view of the player to move there, plus candidate priors
   evaluate(s, acts, wantPriors) {
@@ -127,7 +136,7 @@ export class MCTS {
         value = actor(s) === observer ? v : -v;
         break;
       }
-      acts = capDeterministic(acts, this.maxCands);
+      acts = capDeterministic(acts, this.maxCands, s);
       if (!node.children) { // expand + evaluate leaf
         const { v, priors } = this.evaluate(s, acts, true);
         node.children = new Map(); node.acts = acts;

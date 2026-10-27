@@ -33,7 +33,7 @@ pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
 /// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
-pub const RULES_VERSION: u32 = 6;
+pub const RULES_VERSION: u32 = 7;
 pub const MAX_AI_CARDS: usize = 5;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
@@ -479,10 +479,33 @@ impl State {
         o
     }
 
+    /// edges e of shape sh at (x, y) whose neighbour path node has a distance in `dist`: (e, dist) pairs
+    fn touching(&self, x: i32, y: i32, sh: &Shape, dist: &[i16; 192]) -> FV<(u8, i16), 3> {
+        let mut out = FV::new();
+        for e in 0..3 {
+            if sh.open[e] == 0 { continue; }
+            let (nx, ny, ne) = neighbor(x, y, e);
+            if let Some(ns) = self.slot_at(nx, ny) {
+                if self.cells[ns].open(ne) == 0 { continue; }
+                let n = ns * 3 + self.cells[ns].comp_index(ne);
+                if dist[n] >= 0 { out.push((e as u8, dist[n])); }
+            }
+        }
+        out
+    }
+
+    /// AI candidates: a further hill only where the own ant can reach it (by paths or, when the ant reaches one of its hills, by tunnel)
     pub fn placement_actions(&self, pi: usize, acts: &mut Vec<Act>) {
         let p = &self.players[pi];
         let tiles = Self::uniq(p.hand.as_slice());
         if tiles.is_empty() { return; }
+        let mut reach: Option<Bfs> = None; let mut tunnel = false;
+        if p.ant.is_some() && p.hills_in_hand > 0 {
+            let st = self.ant_starts(pi);
+            let b = self.bfs(pi, st.as_slice(), 999, true);
+            tunnel = self.hill_cells(pi).iter().any(|&h| b.dist[h as usize * 3] >= 0);
+            reach = Some(b);
+        }
         for (x, y) in self.frontier_cells() {
             let id = gid(x, y) as u16;
             let mut hill_ok: Option<bool> = None;
@@ -495,7 +518,7 @@ impl State {
                     acts.push(Act { t: A_PLACE, a: t, b: *r, c: 0, g: id });
                     if p.hills_in_hand > 0 {
                         if hill_ok.is_none() { hill_ok = Some(!self.res_near(x, y)); }
-                        if hill_ok.unwrap() { acts.push(Act { t: A_PLACE, a: t, b: *r, c: 1, g: id }); }
+                        if hill_ok.unwrap() && reach.as_ref().map_or(true, |b| tunnel || !self.touching(x, y, sh, &b.dist).is_empty()) { acts.push(Act { t: A_PLACE, a: t, b: *r, c: 1, g: id }); }
                     }
                     if !self.res_stack.is_empty() {
                         if res_ok.is_none() { res_ok = Some(!self.has_own_hill_near(x, y, pi)); }
@@ -511,6 +534,69 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Priority of placement candidates when the search has to thin them out: (tier, dist) per action (higher tier first, then nearer).
+    /// 4: reconnects an ant that is cut off from its hills (one path piece touches both), 3: hill the ant reaches,
+    /// 2: resource the ant reaches, 1: tile next to the ant's paths, 0: anything else (overlays too). Without an ant: hills first.
+    pub fn placement_tiers(&self, acts: &[Act]) -> Vec<(i32, i32)> {
+        let pi = self.actor();
+        if self.players[pi].ant.is_none() { return acts.iter().map(|a| (if a.t == A_PLACE && a.c == 1 { 3 } else { 0 }, 0)).collect(); }
+        let st = self.ant_starts(pi);
+        let reach = self.bfs(pi, st.as_slice(), 999, true);
+        let hs = self.hill_cells(pi);
+        let hst: Vec<u8> = hs.iter().map(|h| h * 3).collect();
+        let hd = self.bfs(pi, &hst, 999, false);
+        let cut_off = self.ant_node(pi) < 0 || hd.dist[self.ant_node(pi) as usize] < 0;
+        acts.iter().map(|a| {
+            if a.t != A_PLACE { return (0, 0); }
+            let (x, y) = (gx(a.g as i32), gy(a.g as i32));
+            let sh = make_shape(x, y, a.a as usize, a.b as usize);
+            let ta = self.touching(x, y, &sh, &reach.dist);
+            if ta.is_empty() { return (0, 0); }
+            let d = ta.iter().map(|t| t.1 as i32).min().unwrap() + 1;
+            if cut_off && !hs.is_empty() {
+                let th = self.touching(x, y, &sh, &hd.dist);
+                let ng = if a.c == 1 { 1 } else { sh.nc as usize };
+                for k in 0..ng {
+                    let m = if a.c == 1 { sh.all_open } else { sh.comps[k] };
+                    if ta.iter().any(|t| (m >> t.0) & 1 == 1) && th.iter().any(|t| (m >> t.0) & 1 == 1) { return (4, d); }
+                }
+            }
+            (if a.c == 1 { 3 } else if a.c >= 2 { 2 } else { 1 }, d)
+        }).collect()
+    }
+
+    /// transport distance of player q's ant to q's nearest hill (no tunnels; 99 = none)
+    pub fn home_dist(&self, q: usize) -> i32 {
+        if self.players[q].ant.is_none() { return 99; }
+        let st = self.ant_starts(q);
+        let t = self.bfs(q, st.as_slice(), 999, false);
+        self.hill_cells(q).iter().filter(|&&h| t.dist[h as usize * 3] >= 0).map(|&h| t.dist[h as usize * 3] as i32).min().unwrap_or(99)
+    }
+
+    /// For a carrying ant without a transport path: transport reach of the ant and of the own hills (no tunnels)
+    pub fn reconnect_info(&self, pi: usize) -> (Bfs, Option<Bfs>) {
+        let st = self.ant_starts(pi);
+        let hst: Vec<u8> = self.hill_cells(pi).iter().map(|h| h * 3).collect();
+        (self.bfs(pi, st.as_slice(), 999, false), if hst.is_empty() { None } else { Some(self.bfs(pi, &hst, 999, false)) })
+    }
+    /// does placement / bridge `a` join the ant's paths with a hill's paths?
+    pub fn reconnects(&self, info: &(Bfs, Option<Bfs>), a: &Act) -> bool {
+        let (ra, hd) = match info { (ra, Some(hd)) => (ra, hd), _ => return false };
+        if a.t == A_PLACE {
+            let (x, y) = (gx(a.g as i32), gy(a.g as i32));
+            let sh = make_shape(x, y, a.a as usize, a.b as usize);
+            let ta = self.touching(x, y, &sh, &ra.dist); let th = self.touching(x, y, &sh, &hd.dist);
+            let ng = if a.c == 1 { 1 } else { sh.nc as usize };
+            return (0..ng).any(|k| { let m = if a.c == 1 { sh.all_open } else { sh.comps[k] }; ta.iter().any(|t| (m >> t.0) & 1 == 1) && th.iter().any(|t| (m >> t.0) & 1 == 1) });
+        }
+        if a.t == A_BRIDGE {
+            let has = |b: &Bfs, c: usize| (0..self.cells[c].ncomps()).any(|i| b.dist[c * 3 + i] >= 0);
+            let (ca, cb) = (a.a as usize, a.b as usize);
+            return (has(ra, ca) && has(hd, cb)) || (has(ra, cb) && has(hd, ca));
+        }
+        false
     }
 
     fn overlay_actions(&self, pi: usize, acts: &mut Vec<Act>, first_only: bool) {

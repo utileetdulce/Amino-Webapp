@@ -24,13 +24,20 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
     let hills_placed = 2 - p.hills_in_hand as i32;
     let enemy_carrier = !ctx.carriers.is_empty();
     let may_attack = !s.used[2] && p.carry < 0;
+    // carrying, but no transport path to an own hill: transporting is pointless, reconnecting comes first
+    let stuck = p.carry >= 0 && p.ant.is_some() && ctx.cur_hill_dist >= 99;
+    let rc = if stuck { Some(s.reconnect_info(ctx.pi)) } else { None };
+    // enemy carriers on their way home: overbuilding a triangle on that way (superimpose) can cut them off
+    let home_q: Vec<usize> = (0..s.n).filter(|&q| q != ctx.pi && s.players[q].carry >= 0 && s.home_dist(q) < 99).collect();
+    let cuts = |s1: &State| home_q.iter().any(|&q| s1.home_dist(q) >= 99);
+    let after = |s0: &State, x: Act| { let mut s1 = *s0; s1.apply(x); s1 };
     let mut out = vec![0f32; acts.len()];
     let mut f = [0f32; 16];
     for (i, a) in acts.iter().enumerate() {
         let v: f64 = match a.t {
             A_TMOVE => if s.cells[a.a as usize / 3].hill == ctx.pi as i8 { 100.0 } else { 50.0 },
             A_TSTAY => 1.0,
-            A_TRANSPORT => if a.a == 1 { if ctx.cur_hill_dist > 6 { 60.0 } else { -50.0 } } else { 70.0 },
+            A_TRANSPORT => if stuck { -20.0 } else if a.a == 1 { if ctx.cur_hill_dist > 6 { 60.0 } else { -50.0 } } else { 70.0 },
             A_FIGHT => 68.0,
             A_LOAD => 80.0,
             A_UNLOAD => 0.0,
@@ -53,13 +60,17 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
                 f.fill(0.0);
                 action_numeric(s, ctx, *a, &mut f, 0);
                 let (reach, d_ant, to_res) = (f[10] as f64, f[2] as f64, f[11] as f64);
-                if a.c == 1 { if hills_placed == 0 { 90.0 } else if !ctx.free_res.is_empty() { 30.0 + 6.0 * (1.0 - to_res) } else { 22.0 } }
+                // cut off from the hills with a resource: a new hill close to the ant makes the transport possible again
+                let v = if a.c == 1 { if hills_placed == 0 { 90.0 } else if p.carry >= 0 && ctx.cur_hill_dist >= 99 && reach > 0.0 { 85.0 - 30.0 * d_ant } else if !ctx.free_res.is_empty() { 30.0 + 6.0 * (1.0 - to_res) } else { 22.0 } }
                 else if a.c >= 2 { if p.ant.is_some() { 52.0 + 14.0 * reach - 10.0 * d_ant } else { 0.0 } }
-                else { (if hand_n > 2 { 22.0 } else { 12.0 }) + 6.0 * reach + 6.0 * (1.0 - to_res) }
+                else { (if hand_n > 2 { 22.0 } else { 12.0 }) + 6.0 * reach + 6.0 * (1.0 - to_res) };
+                if stuck && s.reconnects(rc.as_ref().unwrap(), a) { v.max(88.0 - 10.0 * d_ant) } else { v }
             }
             A_INC_TILES => if hand_n <= 1 { 68.0 } else if hand_n <= 3 { 40.0 } else { 28.0 },
             A_INC_CARD => if p.cards.is_empty() { 48.0 } else { 30.0 },
-            A_INC_HILL => if hills_placed == 2 && p.ant.is_some() && ctx.free_res.is_empty() { 8.0 } else { -5.0 },
+            // take back a hill the carrying ant cannot reach, to lay it again near the ant
+            A_INC_HILL => if p.carry >= 0 && ctx.cur_hill_dist >= 99 && p.hills_in_hand == 0 && hand_n > 0 && ctx.dist_ant[a.a as usize] < 0 { 60.0 }
+                else if hills_placed == 2 && p.ant.is_some() && ctx.free_res.is_empty() { 8.0 } else { -5.0 },
             A_SWAP => 4.0,
             A_WINGS => {
                 let cid = a.a as usize / 3;
@@ -70,9 +81,9 @@ pub fn heuristic_scores(s: &State, ctx: &Ctx, acts: &[Act]) -> Vec<f32> {
                 else if may_attack && ca.is_some() && !in_reach { 56.0 } else { -10.0 }
             }
             A_BLOCKAGE => if enemy_carrier { 21.0 } else { 6.0 },
-            A_BRIDGE => 24.0,
-            A_SUPER => 9.0,
-            A_OVERLAY => 12.0,
+            A_BRIDGE => if stuck && s.reconnects(rc.as_ref().unwrap(), a) { 80.0 } else { 24.0 },
+            A_SUPER => if !home_q.is_empty() && { let s1 = after(s, *a); s1.legal_actions().iter().any(|o| o.t == A_OVERLAY && cuts(&after(&s1, *o))) } { 75.0 } else { 9.0 },
+            A_OVERLAY => if !home_q.is_empty() && cuts(&after(s, *a)) { 95.0 } else { 12.0 },
             A_SDONE => 14.0,
             A_SUNDO => 0.0,
             A_END => 16.0,

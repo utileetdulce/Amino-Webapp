@@ -1,5 +1,5 @@
 // Agents: random, heuristic, neural. All implement act(state) -> action (for state.pending actor or current player).
-import { legalActions, actor, hasCard } from './engine.js';
+import { legalActions, actor, hasCard, reconnectInfo, reconnects, homeDist, fastClone, applyAction } from './engine.js';
 import { buildCtx, stateFeatures, candidateMatrix, actionNumeric, AF } from './features.js';
 import { softmax, sampleIdx } from './nn.js';
 import { MCTS, pickByVisits } from './mcts.js';
@@ -34,13 +34,21 @@ export function heuristicScores(ctx, acts) {
   const hillsPlaced = 2 - p.hillsInHand;
   const enemyCarrier = ctx.carriers.length > 0;
   const mayAttack = !s.used.fight && p.carry < 0;
+  // carrying, but no transport path to an own hill: transporting is pointless, reconnecting comes first
+  const stuck = p.carry >= 0 && !!p.ant && ctx.curHillDist >= 99;
+  const rc = stuck ? reconnectInfo(s, ctx.pi) : null;
+  // enemy carriers on their way home: overbuilding a triangle on that way (superimpose) can cut them off
+  const homeQ = [];
+  for (let q = 0; q < s.n; q++) if (q !== ctx.pi && s.players[q].carry >= 0 && homeDist(s, q) < 99) homeQ.push(q);
+  const cuts = (s1) => homeQ.some((q) => homeDist(s1, q) >= 99);
+  const after = (s0, x) => { const s1 = fastClone(s0); applyAction(s1, x); return s1; };
   for (let i = 0; i < acts.length; i++) {
     const a = acts[i];
     let v = 0;
     switch (a.t) {
       case 'tmove': v = s.cells[Math.floor(a.to / 3)].hill === ctx.pi ? 100 : 50; break;
       case 'tstay': v = 1; break;
-      case 'transport': v = a.card ? (ctx.curHillDist > 6 ? 60 : -50) : 70; break;
+      case 'transport': v = stuck ? -20 : a.card ? (ctx.curHillDist > 6 ? 60 : -50) : 70; break;
       case 'fight': v = 68; break;
       case 'load': v = 80; break;
       case 'unload': v = 0; break;
@@ -64,14 +72,17 @@ export function heuristicScores(ctx, acts) {
         f.fill(0);
         actionNumeric(ctx, a, f, 0);
         const reach = f[10], dAnt = f[2], toRes = f[11];
-        if (a.piece === 1) v = hillsPlaced === 0 ? 90 : (ctx.freeRes.length ? 30 + 6 * (1 - toRes) : 22);
+        // cut off from the hills with a resource: a new hill close to the ant makes the transport possible again
+        if (a.piece === 1) v = hillsPlaced === 0 ? 90 : p.carry >= 0 && ctx.curHillDist >= 99 && reach ? 85 - 30 * dAnt : (ctx.freeRes.length ? 30 + 6 * (1 - toRes) : 22);
         else if (a.piece === 2) v = p.ant ? 52 + 14 * reach - 10 * dAnt : 0;
         else v = (handN > 2 ? 22 : 12) + 6 * reach + 6 * (1 - toRes);
+        if (stuck && reconnects(s, rc, a)) v = Math.max(v, 88 - 10 * dAnt);
         break;
       }
       case 'inc_tiles': v = handN <= 1 ? 68 : handN <= 3 ? 40 : 28; break;
       case 'inc_card': v = p.cards.length === 0 ? 48 : 30; break;
-      case 'inc_hill': v = hillsPlaced === 2 && p.ant && ctx.freeRes.length === 0 ? 8 : -5; break;
+      case 'inc_hill': // take back a hill the carrying ant cannot reach, to lay it again near the ant
+        v = p.carry >= 0 && ctx.curHillDist >= 99 && p.hillsInHand === 0 && handN > 0 && !ctx.distAnt.has(a.cell) ? 60 : hillsPlaced === 2 && p.ant && ctx.freeRes.length === 0 ? 8 : -5; break;
       case 'swap': v = 4; break;
       case 'wings': {
         const cid = Math.floor(a.to / 3);
@@ -83,9 +94,13 @@ export function heuristicScores(ctx, acts) {
         break;
       }
       case 'blockage': v = enemyCarrier ? 21 : 6; break;
-      case 'bridge': v = 24; break;
-      case 'super': v = 9; break;
-      case 'overlay': v = 12; break;
+      case 'bridge': v = stuck && reconnects(s, rc, a) ? 80 : 24; break;
+      case 'super': {
+        v = 9;
+        if (homeQ.length) { const s1 = after(s, a); if (legalActions(s1, false).some((o) => o.t === 'overlay' && cuts(after(s1, o)))) v = 75; }
+        break;
+      }
+      case 'overlay': v = homeQ.length && cuts(after(s, a)) ? 95 : 12; break;
       case 'sdone': v = 14; break;
       case 'sundo': v = 0; break;
       case 'end': v = 16; break;

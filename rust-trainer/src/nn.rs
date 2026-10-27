@@ -2,19 +2,20 @@
 // With hg > 0 the MLP additionally receives embeddings from a small graph network over the board (see features::Graph):
 // pooled / own-ant / enemy-ant embeddings join the state input, and the embedding of each candidate's target cells joins
 // the candidate input. Extra weights start at zero when grown from a plain MLP (`grow_from`), so the function is unchanged.
-use crate::features::{Graph, Obs, AF, CXN, GXN, NF, NF2, SF};
+use crate::features::{Graph, Obs, AF, CXN, CXN3, GXN, GXN3, NF, NF2, SF};
 use crate::rng::Rng;
 
 pub const EXTK: usize = 3;
 
 #[derive(Clone, Copy)]
-/// fv: graph feature version (0 = plain MLP, 1 = board graph, 2 = + enemy reach / regions / placement-effect features)
+/// fv: graph feature version (0 = plain MLP, 1 = board graph, 2 = + enemy reach / regions / placement-effect features,
+/// 3 = + "ant cut off" extras and per-candidate lookahead of the ant's connections)
 pub struct Arch { pub h1: usize, pub h2: usize, pub hv: usize, pub hg: usize, pub gl: usize, pub fv: usize }
 pub const DEFAULT_ARCH: Arch = Arch { h1: 64, h2: 32, hv: 48, hg: 0, gl: 0, fv: 0 };
 impl Arch {
     pub fn nf(&self) -> usize { if self.fv >= 2 { NF2 } else { NF } }
-    pub fn gxn(&self) -> usize { if self.fv >= 2 { GXN } else { 0 } }
-    pub fn cxn(&self) -> usize { if self.fv >= 2 { CXN } else { 0 } }
+    pub fn gxn(&self) -> usize { if self.fv >= 3 { GXN3 } else if self.fv >= 2 { GXN } else { 0 } }
+    pub fn cxn(&self) -> usize { if self.fv >= 3 { CXN3 } else if self.fv >= 2 { CXN } else { 0 } }
 }
 
 #[derive(Clone, Copy)]
@@ -105,24 +106,26 @@ impl Net {
         n
     }
 
-    /// Graph net with feature version 1 -> version 2: new inputs start with zero weights, so outputs are unchanged.
+    /// Graph net with feature version 1 -> 2 or 2 -> 3: new inputs start with zero weights, so outputs are unchanged.
     pub fn grow_features(old: &Net, rng: &mut Rng) -> Net {
-        assert!(old.arch.hg > 0 && old.arch.fv == 1);
-        let arch = Arch { fv: 2, ..old.arch };
+        assert!(old.arch.hg > 0 && (old.arch.fv == 1 || old.arch.fv == 2));
+        let arch = Arch { fv: old.arch.fv + 1, ..old.arch };
         let mut n = Net::random(arch, rng);
         let (lo, ln) = (old.l, n.l);
         let (h1, hv, hg) = (arch.h1, arch.hv, arch.hg);
-        for x in n.theta[ln.win + NF * hg..ln.win + NF2 * hg].iter_mut() { *x = 0.0; }
+        let onf = old.arch.nf();
+        for x in n.theta[ln.win + onf * hg..ln.win + NF2 * hg].iter_mut() { *x = 0.0; }
         for x in n.theta[ln.ws + lo.nin * h1..ln.ws + ln.nin * h1].iter_mut() { *x = 0.0; }
         for x in n.theta[ln.v1 + lo.nin * hv..ln.v1 + ln.nin * hv].iter_mut() { *x = 0.0; }
-        for x in n.theta[ln.wx..ln.wx + CXN * h1].iter_mut() { *x = 0.0; }
+        for x in n.theta[ln.wx..ln.wx + arch.cxn() * h1].iter_mut() { *x = 0.0; }
         let cp = |n: &mut Net, dst: usize, src: usize, len: usize| { n.theta[dst..dst + len].copy_from_slice(&old.theta[src..src + len]); };
         cp(&mut n, ln.ws, lo.ws, lo.nin * h1); cp(&mut n, ln.wa, lo.wa, AF * h1); cp(&mut n, ln.b1, lo.b1, h1);
         cp(&mut n, ln.w2, lo.w2, h1 * arch.h2); cp(&mut n, ln.b2, lo.b2, arch.h2); cp(&mut n, ln.w3, lo.w3, arch.h2); cp(&mut n, ln.b3, lo.b3, 1);
         cp(&mut n, ln.v1, lo.v1, lo.nin * hv); cp(&mut n, ln.bv1, lo.bv1, hv); cp(&mut n, ln.v2, lo.v2, hv); cp(&mut n, ln.bv2, lo.bv2, 1);
         cp(&mut n, ln.wc, lo.wc, hg * h1); cp(&mut n, ln.v3, lo.v3, hv); cp(&mut n, ln.bv3, lo.bv3, 1);
-        cp(&mut n, ln.win, lo.win, NF * hg); cp(&mut n, ln.bin, lo.bin, hg);
+        cp(&mut n, ln.win, lo.win, onf * hg); cp(&mut n, ln.bin, lo.bin, hg);
         cp(&mut n, ln.gl0, lo.gl0, lo.lsz * arch.gl);
+        cp(&mut n, ln.wx, lo.wx, old.arch.cxn() * h1);
         n
     }
 

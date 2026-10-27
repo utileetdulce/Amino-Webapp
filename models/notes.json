@@ -123,5 +123,15 @@
   "status": "",
   "name": "Graph-Netz e3 (bester Zwischenstand)",
   "note": "Bester 16-Partien-Test des e3-Laufs (Iter. 305, verrauscht): 37 % (±5) gegen graph-e1."
+ },
+ "graph-r6.json": {
+  "status": "",
+  "name": "Graph-Netz r6 (Regeln v6, Endstand)",
+  "note": "60 Minuten ab graph-e1 mit dem graph-e1-Rezept, erstmals unter Regelversion 6 (Hügelabstand auch zu getragenen Ressourcen, Ressource auf einem Wegstück). Endstand 44 % (±5) gegen graph-e1, 71 % gegen az-vtd (graph-e1: 77 %), 97 % gegen Heuristik – kein Fortschritt."
+ },
+ "graph-r6.best.json": {
+  "status": "",
+  "name": "Graph-Netz r6 (bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert."
  }
 }

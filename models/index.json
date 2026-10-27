@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-26T18:24:43.076Z",
+ "updated": "2026-10-27T21:46:37.687Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -521,6 +521,42 @@
    "default": false,
    "heuristicRate": 0.875,
    "rawRate": 0.84375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-r6.best.json",
+   "id": "m-1a17f158808-b400",
+   "name": "Graph-Netz r6 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-27T20:37:59.000Z",
+   "updatedAt": "2026-10-27T21:33:14.000Z",
+   "rulesVersion": 6,
+   "games": 15360,
+   "iter": 320,
+   "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.84375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-r6.json",
+   "id": "m-1a17f158808-b400",
+   "name": "Graph-Netz r6 (Regeln v6, Endstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-27T20:37:59.000Z",
+   "updatedAt": "2026-10-27T21:38:00.000Z",
+   "rulesVersion": 6,
+   "games": 16464,
+   "iter": 343,
+   "note": "60 Minuten ab graph-e1 mit dem graph-e1-Rezept, erstmals unter Regelversion 6 (Hügelabstand auch zu getragenen Ressourcen, Ressource auf einem Wegstück). Endstand 44 % (±5) gegen graph-e1, 71 % gegen az-vtd (graph-e1: 77 %), 97 % gegen Heuristik – kein Fortschritt.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 0.84375,
+   "rawRate": 0.875,
    "randomRate": null
   },
   {

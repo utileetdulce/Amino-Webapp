@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-28T07:55:57.302Z",
+ "updated": "2026-10-28T07:56:19.739Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -552,9 +552,9 @@
    "rulesVersion": 6,
    "games": 15360,
    "iter": 320,
-   "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert. Standardmodell seit 27.10.2026.",
+   "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert. Standardmodell vom 27. bis 28.10.2026.",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": 1,
    "rawRate": 0.84375,
    "randomRate": null

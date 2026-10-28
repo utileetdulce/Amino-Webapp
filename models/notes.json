@@ -133,7 +133,7 @@
  "graph-r6.best.json": {
   "status": "",
   "name": "Graph-Netz r6 (Regeln v6, bester Zwischenstand)",
-  "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert. Standardmodell seit 27.10.2026.",
-  "default": true
+  "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert. Standardmodell vom 27. bis 28.10.2026.",
+  "default": false
  }
 }

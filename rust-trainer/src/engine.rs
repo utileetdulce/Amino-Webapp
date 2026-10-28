@@ -33,7 +33,7 @@ pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
 /// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
-pub const RULES_VERSION: u32 = 8;
+pub const RULES_VERSION: u32 = 9;
 pub const MAX_AI_CARDS: usize = 5;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
@@ -184,7 +184,7 @@ pub struct State {
     pub cur: usize, pub turn_no: i32, pub used: [bool; 4], pub actions_this_turn: i32,
     pub pending: Option<Pending>, pub winner: i8, pub over: bool,
     // anti-loop bookkeeping for AI candidate generation (mirrors JS moveTrail / lastT)
-    pub move_trail: FV<u8, 80>, pub last_t: u8, pub plain_moves: u8,
+    pub move_trail: FV<u8, 80>, pub last_t: u8, pub plain_moves: u8, pub moved_turn: bool, pub late_enabler: bool,
 }
 
 // used[]: 0 income, 1 swap, 2 fight, 3 transport
@@ -269,7 +269,7 @@ impl State {
         self.blocks = keep;
         self.used = [false; 4];
         self.actions_this_turn = 0;
-        self.move_trail = FV::new(); self.last_t = 255; self.plain_moves = 0;
+        self.move_trail = FV::new(); self.last_t = 255; self.plain_moves = 0; self.moved_turn = false; self.late_enabler = false;
     }
     fn end_turn(&mut self) {
         let cur = self.cur;
@@ -668,7 +668,7 @@ impl State {
                 let mut is_int = [false; 192];
                 for &n in interesting.iter() { is_int[n as usize] = true; }
                 // after a plain ant move (not hill-to-hill) only hill-to-hill moves until some other action happened
-                let on_hill = cs.hill == pi as i8; let plain_done = self.plain_moves > 0;
+                let on_hill = cs.hill == pi as i8; let plain_done = self.plain_moves > 0 || self.late_enabler;
                 let dests: Vec<u8> = bf.order.iter()
                     .filter(|(n, d)| *d > 0 && !self.move_trail.iter().any(|t| t == n)
                         && !(plain_done && !(on_hill && self.cells[*n as usize / 3].hill == pi as i8)))
@@ -844,13 +844,27 @@ impl State {
         self.pending = None;
     }
 
+    /// (target cell, reachable for the ant right now) for free resources, enemy carriers and own hills
+    fn target_reach(&self, pi: usize) -> Vec<(u8, bool)> {
+        let mut cells: Vec<u8> = Vec::with_capacity(16);
+        for r in self.resources.iter() { if r.owner < 0 && r.carrier < 0 && r.cell >= 0 { cells.push(r.cell as u8); } }
+        for q in 0..self.n { if q != pi && self.players[q].carry >= 0 { if let Some(a) = &self.players[q].ant { cells.push(a.cell); } } }
+        for h in self.hill_cells(pi).iter() { cells.push(*h); }
+        let st = self.ant_starts(pi);
+        let bf = self.bfs(pi, st.as_slice(), 999, true);
+        let mut reached = [false; 64];
+        for (n, _) in bf.order.iter() { reached[*n as usize / 3] = true; }
+        cells.into_iter().map(|c| (c, reached[c as usize])).collect()
+    }
+
     pub fn apply(&mut self, a: Act) {
         if self.over { return; }
         let pi = self.actor();
+        let reach_before = if self.moved_turn && self.players[pi].ant.is_some() && (a.t == A_BRIDGE || a.t == A_PLACE || a.t == A_OVERLAY) { Some(self.target_reach(pi)) } else { None };
         if a.t == A_MOVE {
             if self.move_trail.is_empty() { let n = self.ant_node(pi); if n >= 0 { self.move_trail.push(n as u8); } }
             let from = self.players[pi].ant.unwrap().cell as usize; let to = a.a as usize / 3;
-            if !(from != to && self.cells[from].hill == pi as i8 && self.cells[to].hill == pi as i8) { self.plain_moves = self.plain_moves.saturating_add(1); }
+            if !(from != to && self.cells[from].hill == pi as i8 && self.cells[to].hill == pi as i8) { self.plain_moves = self.plain_moves.saturating_add(1); self.moved_turn = true; }
         } else if a.t != A_END { self.move_trail = FV::new(); self.plain_moves = 0; }
         match a.t {
             A_INC_TILES => {
@@ -1005,6 +1019,13 @@ impl State {
             A_END => { self.end_turn(); return; }
             _ => {}
         }
+        if let Some(before) = reach_before {
+            if self.players[pi].ant.is_some() {
+                let after = self.target_reach(pi);
+                // targets are compared by cell: same cells, same order unless the action changed the target list (then match by cell)
+                for (c, was) in before.iter() { if !*was && after.iter().any(|(c2, r2)| c2 == c && *r2) { self.late_enabler = true; break; } }
+            }
+        }
         self.last_t = a.t;
         if self.pending.map_or(true, |p| p.kind == P_SUPER) { self.actions_this_turn += 1; }
     }
@@ -1019,7 +1040,7 @@ pub fn new_game(num_players: usize, seed: i32) -> State {
         tile_stack: FV::new(), res_stack: FV::new(), card_stack: FV::new(),
         resources: FV::new(), hills: FV::new(), blocks: FV::new(), bridges: FV::new(),
         cur: 0, turn_no: 0, used: [false; 4], actions_this_turn: 0, pending: None, winner: -1, over: false,
-        move_trail: FV::new(), last_t: 255, plain_moves: 0,
+        move_trail: FV::new(), last_t: 255, plain_moves: 0, moved_turn: false, late_enabler: false,
     };
     let mut buf = [0u8; 56];
     let mut k = 0;

@@ -16,7 +16,7 @@ export const KINDS = ['Blume', 'Pilz', 'Raupe'];
 export const WIN_POINTS = 7;
 
 // Bump RULES_VERSION whenever game rules / action generation change in a way that makes older trained weights "stale".
-export const RULES_VERSION = 7;
+export const RULES_VERSION = 8;
 export const MAX_AI_CARDS = 5; // AI candidate generation: no more card income at this many cards
 export const RULES_CHANGELOG = [
   { v: 1, date: '2026-10-20', text: 'Erste Regelumsetzung' },
@@ -26,6 +26,7 @@ export const RULES_CHANGELOG = [
   { v: 5, date: '2026-10-24', text: 'KI-Kandidaten: mit leerer Hand nur Dreiecke als Einkommen, höchstens 5 Karten horten (verhindert Stillstand ohne Ausbau)' },
   { v: 6, date: '2026-10-27', text: 'Abstandsregel beim Hügelbau zählt auch getragene Ressourcen; eine Ressource liegt auf genau einem Wegstück ihres Dreiecks (verbindet getrennte Wege nicht mehr)' },
   { v: 7, date: '2026-10-28', text: 'KI-Kandidaten: ein weiterer Hügel nur dort, wo die eigene Ameise ihn erreicht (sonst nur per Tunnel); bei vielen Lege-Möglichkeiten zuerst die, die die Ameise wieder mit dem Hügel verbinden oder nahe der Ameise liegen' },
+  { v: 8, date: '2026-10-28', text: 'KI-Kandidaten: nach einer Ameisenbewegung ohne Ressource keine zweite, solange dazwischen keine andere Aktion (Angriff, Legen, Überbauen, Blockade, Abladen …) stattfand; Hügel-zu-Hügel-Bewegung zählt nicht mit' },
 ];
 export const MAX_ACTIONS = 70;
 export const MAX_ROUNDS = 90;
@@ -147,7 +148,7 @@ function startTurn(s) {
   s.blocks = s.blocks.filter((b) => b.owner !== s.cur);
   s.used = { income: 0, swap: 0, fight: 0, transport: 0 };
   s.actionsThisTurn = 0;
-  s.moveTrail = []; s.lastT = null; // anti-loop bookkeeping for AI candidate generation
+  s.moveTrail = []; s.lastT = null; s.plainMoves = 0; // anti-loop bookkeeping for AI candidate generation
 }
 
 function endTurn(s) {
@@ -535,7 +536,14 @@ export function legalActions(s, full = false) {
     const dests = [];
     // AI only: never step back onto a node already visited this turn without another action in between
     const trail = !full && s.moveTrail && s.moveTrail.length ? new Set(s.moveTrail) : null;
-    for (const [n, d] of dist) if (d > 0 && !(trail && trail.has(n))) dests.push([n, d]);
+    // AI only: after a plain ant move (not hill-to-hill) no further plain move until some other action happened
+    const noPlain = !full && s.plainMoves > 0 && cs && cs.hill !== pi;
+    const noPlainFromHill = !full && s.plainMoves > 0 && cs && cs.hill === pi;
+    for (const [n, d] of dist) {
+      if (d <= 0 || (trail && trail.has(n))) continue;
+      if (noPlain || (noPlainFromHill && s.cells[nodeCell(n)].hill !== pi)) continue;
+      dests.push([n, d]);
+    }
     if (p.carry >= 0) {
       // house rule: with a resource the ant moves ONLY via the transport action (dice), never by a plain move
     } else if (full) {
@@ -709,8 +717,11 @@ export function applyAction(s, a) {
   const pi = actor(s);
   const p = s.players[pi];
   const info = {};
-  if (a.t === 'move') { if (!s.moveTrail) s.moveTrail = []; if (!s.moveTrail.length && p.ant) s.moveTrail.push(antNode(s, pi)); }
-  else if (a.t !== 'end') s.moveTrail = [];
+  if (a.t === 'move') {
+    if (!s.moveTrail) s.moveTrail = []; if (!s.moveTrail.length && p.ant) s.moveTrail.push(antNode(s, pi));
+    const from = p.ant.cell, to = nodeCell(a.to);
+    if (!(from !== to && s.cells[from].hill === pi && s.cells[to].hill === pi)) s.plainMoves = (s.plainMoves || 0) + 1;
+  } else if (a.t !== 'end') { s.moveTrail = []; s.plainMoves = 0; }
   switch (a.t) {
     case 'inc_tiles': {
       let k = 0;

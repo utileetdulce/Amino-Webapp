@@ -33,7 +33,7 @@ pub const A_INC_HILL: u8 = 2;
 pub const A_SWAP: u8 = 3;
 pub const A_PLACE: u8 = 4;
 /// Keep in sync with RULES_VERSION in js/engine.js (bumped whenever rules / action generation change).
-pub const RULES_VERSION: u32 = 7;
+pub const RULES_VERSION: u32 = 8;
 pub const MAX_AI_CARDS: usize = 5;
 pub const A_MOVE: u8 = 5;
 pub const A_LOAD: u8 = 6;
@@ -184,7 +184,7 @@ pub struct State {
     pub cur: usize, pub turn_no: i32, pub used: [bool; 4], pub actions_this_turn: i32,
     pub pending: Option<Pending>, pub winner: i8, pub over: bool,
     // anti-loop bookkeeping for AI candidate generation (mirrors JS moveTrail / lastT)
-    pub move_trail: FV<u8, 80>, pub last_t: u8,
+    pub move_trail: FV<u8, 80>, pub last_t: u8, pub plain_moves: u8,
 }
 
 // used[]: 0 income, 1 swap, 2 fight, 3 transport
@@ -269,7 +269,7 @@ impl State {
         self.blocks = keep;
         self.used = [false; 4];
         self.actions_this_turn = 0;
-        self.move_trail = FV::new(); self.last_t = 255;
+        self.move_trail = FV::new(); self.last_t = 255; self.plain_moves = 0;
     }
     fn end_turn(&mut self) {
         let cur = self.cur;
@@ -667,7 +667,12 @@ impl State {
                 let interesting = self.interesting_nodes(pi);
                 let mut is_int = [false; 192];
                 for &n in interesting.iter() { is_int[n as usize] = true; }
-                let dests: Vec<u8> = bf.order.iter().filter(|(n, d)| *d > 0 && !self.move_trail.iter().any(|t| t == n)).map(|(n, _)| *n).collect();
+                // after a plain ant move (not hill-to-hill) only hill-to-hill moves until some other action happened
+                let on_hill = cs.hill == pi as i8; let plain_done = self.plain_moves > 0;
+                let dests: Vec<u8> = bf.order.iter()
+                    .filter(|(n, d)| *d > 0 && !self.move_trail.iter().any(|t| t == n)
+                        && !(plain_done && !(on_hill && self.cells[*n as usize / 3].hill == pi as i8)))
+                    .map(|(n, _)| *n).collect();
                 let mut chosen: Vec<u8> = Vec::with_capacity(16);
                 let mut mark = [false; 192];
                 for &n in &dests { if is_int[n as usize] && !mark[n as usize] { mark[n as usize] = true; chosen.push(n); } }
@@ -844,7 +849,9 @@ impl State {
         let pi = self.actor();
         if a.t == A_MOVE {
             if self.move_trail.is_empty() { let n = self.ant_node(pi); if n >= 0 { self.move_trail.push(n as u8); } }
-        } else if a.t != A_END { self.move_trail = FV::new(); }
+            let from = self.players[pi].ant.unwrap().cell as usize; let to = a.a as usize / 3;
+            if !(from != to && self.cells[from].hill == pi as i8 && self.cells[to].hill == pi as i8) { self.plain_moves = self.plain_moves.saturating_add(1); }
+        } else if a.t != A_END { self.move_trail = FV::new(); self.plain_moves = 0; }
         match a.t {
             A_INC_TILES => {
                 for _ in 0..4 { if let Some(t) = self.tile_stack.pop() { self.players[pi].hand.push(t); } }
@@ -1012,7 +1019,7 @@ pub fn new_game(num_players: usize, seed: i32) -> State {
         tile_stack: FV::new(), res_stack: FV::new(), card_stack: FV::new(),
         resources: FV::new(), hills: FV::new(), blocks: FV::new(), bridges: FV::new(),
         cur: 0, turn_no: 0, used: [false; 4], actions_this_turn: 0, pending: None, winner: -1, over: false,
-        move_trail: FV::new(), last_t: 255,
+        move_trail: FV::new(), last_t: 255, plain_moves: 0,
     };
     let mut buf = [0u8; 56];
     let mut k = 0;

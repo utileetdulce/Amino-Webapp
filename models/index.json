@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-28T07:56:19.739Z",
+ "updated": "2026-10-28T08:50:33.802Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -535,6 +535,24 @@
    "games": 4368,
    "iter": 91,
    "note": "45 Minuten ab graph-r6.best unter Regelversion 8 (keine zwei einfachen Ameisenbewegungen ohne dazwischenliegende Aktion), Rezept wie graph-e1. 56 % (±6) gegen graph-r6.best unter den neuen Regeln, 94 % gegen die Heuristik (+5,71 Punkte); 23 statt 60 Entscheidungen je Zug.",
+   "status": "",
+   "default": false,
+   "heuristicRate": null,
+   "rawRate": null,
+   "randomRate": null
+  },
+  {
+   "file": "graph-k2.json",
+   "id": "m-1a18188c4c7-f100",
+   "name": "Graph-Netz Regeln v9",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-28T08:03:06.000Z",
+   "updatedAt": "2026-10-28T08:43:41.000Z",
+   "rulesVersion": 9,
+   "games": 3648,
+   "iter": 76,
+   "note": "40 Minuten ab graph-k1 unter Regelversion 9 (Wege zuerst vorbereiten, dann gehen), Rezept wie graph-e1. 55 % (±6) gegen graph-k1 unter den neuen Regeln, 95 % gegen die Heuristik (+5,57 Punkte), 21 Entscheidungen je Zug (vor Regel v8: 60).",
    "status": "",
    "default": true,
    "heuristicRate": null,

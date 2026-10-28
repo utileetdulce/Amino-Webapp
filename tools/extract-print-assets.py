@@ -5,7 +5,7 @@ usage: python3 tools/extract-print-assets.py <folder with the print PDFs>
 needs: pdftoppm (poppler), PyMuPDF, Pillow, numpy
 
 Writes into assets/ (plus js/tile-art.js):
-  tiles.webp      the 100 painted landscape triangles (Y, Kurve, Sackgasse) as one atlas
+  tiles.webp      the 100 painted landscape triangles (all six path patterns) as one atlas
   res-0/1/2.png   resource tokens Blume, Pilz, Raupe (order of KINDS in js/engine.js)
   ant.png         ant silhouette, hill.png grey hill dome (tinted per player in the app)
   card-*.webp     ant card fronts (CARD_TYPES ids), card-back.webp
@@ -50,7 +50,8 @@ def save_webp(im, name, q=80):
 Y0, RH, X0 = 77.0, 430.0, 300.0
 S = RH / (math.sqrt(3) / 2)
 SIDE = 240  # triangle side in the atlas
-NAMES = {(1, (1,)): 2, (2, (2,)): 1, (3, (3,)): 0}  # (open edges, path piece sizes) -> TILE_TYPES index (Sackgasse, Kurve, Y)
+# (open edges, path piece sizes) -> TILE_TYPES index: Sackgasse, Kurve, Y, Gabel, Stummel2, Stummel3
+NAMES = {(1, (1,)): 2, (2, (2,)): 1, (3, (3,)): 0, (3, (2, 1)): 3, (2, (1, 1)): 4, (3, (1, 1, 1)): 5}
 
 
 def classify(a, V):
@@ -68,7 +69,7 @@ def classify(a, V):
         x, y = int(mx + (C[0] - mx) * 0.12), int(my + (C[1] - my) * 0.12)
         seeds.append((x, y))
         opn.append(wm[y - 6:y + 7, x - 6:x + 7].mean() >= 0.5)
-    lab = Image.fromarray((wm * 255).astype(np.uint8))
+    lab = Image.fromarray((wm * 255).astype(np.uint8)).copy()  # (Pillow 12 does not flood-fill array-backed images)
     comp = [-1] * 3
     for i in range(3):
         if not opn[i] or comp[i] >= 0: continue
@@ -102,13 +103,13 @@ def tiles():
                     sizes = tuple(sorted(collections.Counter(comp[i] for i in range(3) if opn[i]).values(), reverse=True))
                     t = NAMES.get((sum(opn), sizes))
                     if t is None: print('skipped triangle with', opn, comp); continue
-                    found.append((page, V, t, opn))
+                    found.append((page, V, t, opn, comp))
     f = SIDE / S
     cw, ch = int(S * 1.08 * f) + 2, int((S * math.sqrt(3) / 2 + S * 0.08) * f) + 2
     cols = 10
     atlas = Image.new('RGB', (cols * cw, math.ceil(len(found) / cols) * ch), (120, 140, 90))
     meta = []
-    for n, (page, V, t, opn) in enumerate(found):
+    for n, (page, V, t, opn, comp) in enumerate(found):
         pad = S * 0.04
         bx, by = min(v[0] for v in V) - pad, min(v[1] for v in V) - pad
         crop = page.crop((int(bx), int(by), int(max(v[0] for v in V) + pad), int(max(v[1] for v in V) + pad)))
@@ -116,7 +117,10 @@ def tiles():
         ax, ay = (n % cols) * cw, (n // cols) * ch
         atlas.paste(crop, (ax, ay))
         # template slot k (TILE_TYPES open/groups index) sits on picture edge (k + s) % 3; both run clockwise
-        s = 0 if t == 0 else (opn.index(0) - 2) % 3 if t == 1 else opn.index(1)
+        if t in (0, 5): s = 0
+        elif t in (1, 4): s = (opn.index(0) - 2) % 3  # closed edge -> slot 2
+        elif t == 2: s = opn.index(1)  # open edge -> slot 0
+        else: s = ([comp.count(c) for c in comp].index(1) - 2) % 3  # Gabel: lone stub -> slot 2
         P = [(ax + (v[0] - int(bx)) * f, ay + (v[1] - int(by)) * f) for v in V]
         meta.append({'t': t, 'v': [[round(P[(k + s) % 3][0], 1), round(P[(k + s) % 3][1], 1)] for k in range(3)]})
     save_webp(atlas, 'tiles.webp', 78)

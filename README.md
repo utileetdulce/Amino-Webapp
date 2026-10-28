@@ -117,19 +117,20 @@ js/art.js        Original-Grafiken    js/tile-art.js Lage der gemalten Dreiecke 
 `assets/` enthält Ausschnitte aus den [Print-and-Play-PDFs](https://github.com/asishallab/Amino/tree/master/print):
 die 100 gemalten Landschaftsdreiecke (`tiles.webp`), Ressourcen-Sticker, Ameise, Hügel (grau, im Spiel in der Spielerfarbe
 eingefärbt), Ameisenkarten mit Rückseite, die sechs Koloniekarten (eine je Punkteverteilung) und die gemalte
-Dreiecks-Rückseite als grüne Textur für die gezeichneten Dreieckstypen. Neu erzeugen:
+Dreiecks-Rückseite als grüne Textur (nur sichtbar, solange die Bilder laden). Neu erzeugen:
 
 ```
 python3 tools/extract-print-assets.py <Ordner mit den Druck-PDFs>   # braucht pdftoppm, PyMuPDF, Pillow, numpy
 ```
 
-Die Druckvorlage hat nur drei Wegemuster (je 50 Dreiecke: 22 Y, 18 Kurven, 10 Sackgassen); das Skript findet sie über
+Die Druckvorlage enthält alle sechs Wegemuster (je 50 Dreiecke: 18 Y, 16 Kurven, 10 Sackgassen, je 2 Gabeln,
+2er- und 3er-Stummel); das Skript findet die Dreiecke über
 das Schnittgitter, erkennt die Wege (offene Kanten, verbundene Wegstücke) und speichert je Dreieck, welche Ecke welcher
 Vorlagen-Kante gegenüberliegt – so lässt sich jedes Bild per affiner Abbildung auf jede Lage und Drehung eines Feldes legen.
 
 ## Abweichungen von der Tabletop-Vorlage
 
-* Sechs Dreieckstypen statt drei: Y, Kurve und Sackgasse wie im Original (mit den gemalten Original-Dreiecken); Gabel und 2 bzw. 3 getrennte Stummel sind eine Ergänzung dieser Umsetzung (gezeichnet). Verteilung hier: 8 Y, 12 Kurven, 6 Sackgassen, 10 Gabeln, 8 + 6 Stummel-Dreiecke (im Original 22 / 18 / 10).
+* Andere Verteilung der Dreieckstypen: hier 8 Y, 12 Kurven, 6 Sackgassen, 10 Gabeln, 8 + 6 Stummel-Dreiecke (im Original 18 / 16 / 10 / 2 / 2 + 2). Alle Typen zeigen die gemalten Original-Dreiecke.
 * Hügelfelder verbinden alle ihre Wege; eine Ressource liegt auf genau einem Wegstück ihres Dreiecks (Regelversion 6); Brücken verbinden zwei *benachbarte* Dreiecke; Ressourcen werden verdeckt gezogen.
 * **Hausregel (ohne Ausnahme):** Eine Ameise mit Ressource bewegt sich nur per Transport-Aktion mit Würfelwurf, nie durch normales Bewegen.
 * Spielende nach 90 Runden mit Punktevergleich (Schutz gegen Endlosspiele).

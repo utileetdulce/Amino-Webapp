@@ -26,5 +26,5 @@ Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Re
 <h3>Bedienung</h3>
 <p>Dreieck in der Hand anklicken, mit <kbd>R</kbd> / Rechtsklick drehen, auf ein hervorgehobenes Feld klicken. Brett: ziehen = verschieben, Mausrad = Zoom.</p>
 <h3>Abweichungen von der Tabletop-Vorlage</h3>
-<p>Die Druckvorlage enthält drei Wege-Muster (Y-Kreuzung, Kurve, Sackgasse); diese Dreiecke zeigen hier die gemalten Original-Dreiecke. Die drei Muster mit getrennten Wegen (Gabel mit Stummel, zwei bzw. drei getrennte Stummel) sind eine Ergänzung dieser Umsetzung und werden gezeichnet. Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel-Felder verbinden alle ihre Wege (eine Ressource dagegen nicht); Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
+<p>Die Dreiecke zeigen die gemalten Original-Dreiecke. Die Mischung der sechs Wege-Muster ist hier anders: mehr Gabeln und getrennte Stummel (10 / 8 / 6 statt je 2 von 50), dafür weniger Y-Kreuzungen und Kurven. Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel-Felder verbinden alle ihre Wege (eine Ressource dagegen nicht); Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
 </div>`;

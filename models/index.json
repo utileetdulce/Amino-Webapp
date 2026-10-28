@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-27T22:14:54.740Z",
+ "updated": "2026-10-28T07:55:57.302Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -521,6 +521,24 @@
    "default": false,
    "heuristicRate": 0.875,
    "rawRate": 0.84375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-k1.json",
+   "id": "m-1a181538d2e-c600",
+   "name": "Graph-Netz Regeln v8",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-28T07:04:58.000Z",
+   "updatedAt": "2026-10-28T07:50:00.000Z",
+   "rulesVersion": 8,
+   "games": 4368,
+   "iter": 91,
+   "note": "45 Minuten ab graph-r6.best unter Regelversion 8 (keine zwei einfachen Ameisenbewegungen ohne dazwischenliegende Aktion), Rezept wie graph-e1. 56 % (±6) gegen graph-r6.best unter den neuen Regeln, 94 % gegen die Heuristik (+5,71 Punkte); 23 statt 60 Entscheidungen je Zug.",
+   "status": "",
+   "default": true,
+   "heuristicRate": null,
+   "rawRate": null,
    "randomRate": null
   },
   {

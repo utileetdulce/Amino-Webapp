@@ -351,20 +351,19 @@ export class BoardView {
       ctx.strokeStyle = m.color || 'rgba(255,230,80,.9)'; ctx.lineWidth = Math.max(3, sc * 0.09); ctx.setLineDash([6, 5]);
       ctx.beginPath(); ctx.moveTo(tx(ca[0]), ty(ca[1])); ctx.lineTo(tx(cb[0]), ty(cb[1])); ctx.stroke(); ctx.setLineDash([]);
     }
-    // pieces: smaller and slightly transparent, with the path network re-drawn faintly on top, so the ways stay readable at a glance
-    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
+    // pieces: opaque with a drop shadow (light from the top left); on drawn tiles the path network is re-drawn faintly on top
     const occupied = [];
     for (const k in s.cells) {
       const c = s.cells[k];
       const [cx, cy] = cellCenter(c.x, c.y);
       const X = tx(cx), Y = ty(cy);
       const r = sc * 0.145;
-      ctx.globalAlpha = 0.86;
       const hillImg = c.hill >= 0 && hillSprite(PLAYER_COLORS[c.hill]);
       if (hillImg) {
         const hw = r * 2.7, hh = hw * hillImg.height / hillImg.width;
-        ctx.globalAlpha = 0.95; ctx.drawImage(hillImg, X - hw / 2, Y + r * 0.5 - hh, hw, hh); ctx.globalAlpha = 0.86;
+        shadowed(ctx, sc, () => ctx.drawImage(hillImg, X - hw / 2, Y + r * 0.5 - hh, hw, hh));
       } else if (c.hill >= 0) {
+        pieceShadow(ctx, sc);
         const hr = r * 1.3, hy = Y + r * 0.45;
         ctx.fillStyle = PLAYER_COLORS[c.hill];
         ctx.beginPath(); ctx.arc(X, hy, hr, Math.PI, 0); ctx.closePath(); ctx.fill();
@@ -380,17 +379,16 @@ export class BoardView {
         }
       }
       if (c.block >= 0) {
+        pieceShadow(ctx, sc);
         ctx.fillStyle = PLAYER_COLORS[c.block]; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
         const q = r * 1.6;
         ctx.fillRect(X - q / 2, Y - q / 2, q, q); ctx.strokeRect(X - q / 2, Y - q / 2, q, q);
         ctx.beginPath(); ctx.moveTo(X - q / 2, Y - q / 2); ctx.lineTo(X + q / 2, Y + q / 2); ctx.moveTo(X + q / 2, Y - q / 2); ctx.lineTo(X - q / 2, Y + q / 2); ctx.stroke();
       }
-      ctx.globalAlpha = 1;
+      noShadow(ctx);
       if (c.hill >= 0 || c.res >= 0 || c.block >= 0) occupied.push(c);
     }
-    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     for (const c of occupied) { if (hasArt(c.tile)) continue; ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
-    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
     // ants: placed on the path group (component) they actually stand in
     const byCell = {};
     for (const p of s.players) if (p.ant) (byCell[p.ant.cell] = byCell[p.ant.cell] || []).push(p);
@@ -409,16 +407,12 @@ export class BoardView {
         const off = (i - (list.length - 1) / 2) * sc * 0.22;
         const X = tx(ax) + crowd[0] * sc + off, Y = ty(ay) + crowd[1] * sc;
         const r = sc * 0.125;
-        ctx.globalAlpha = 0.92;
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(X, Y, r * 1.15, 0, 7); ctx.fill();
-        ctx.lineWidth = Math.max(2, sc * 0.045); ctx.strokeStyle = p.color; ctx.stroke();
+        token(ctx, X, Y, r * 1.15, '#fff', p.color, Math.max(2, sc * 0.045));
         if (ART.ant.ok) { const aw = r * 1.8, ah = aw * ART.ant.height / ART.ant.width; ctx.drawImage(ART.ant, X - aw / 2, Y - ah / 2, aw, ah); }
         else { ctx.font = `${Math.round(r * 1.7)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000'; ctx.fillText('🐜', X, Y + 1); }
         if (p.carry >= 0) { drawResource(ctx, X + r * 1.15, Y - r * 1.15, r * 0.78, s.resources[p.carry].kind); ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(2, sc * 0.035); ctx.beginPath(); ctx.arc(X + r * 1.15, Y - r * 1.15, r * 0.9, 0, 7); ctx.stroke(); }
-        ctx.globalAlpha = 1;
       });
     }
-    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     // ghost
     if (this.ghost) {
       const g = this.ghost;
@@ -480,9 +474,36 @@ function inTri(px, py, v) {
   return !(neg && pos);
 }
 
+// Drop shadow for pieces standing on the board, light from the top left: a wide soft one, or (contact) a tight dark one
+// at the base. Canvas shadows ignore the transform, so they are scaled by the device pixel ratio.
+function pieceShadow(ctx, sc, contact = false) {
+  const d = ctx.getTransform().a;
+  ctx.shadowColor = contact ? 'rgba(15,10,0,.6)' : 'rgba(15,10,0,.55)';
+  ctx.shadowBlur = Math.max(contact ? 1.5 : 3, sc * (contact ? 0.025 : 0.09)) * d;
+  ctx.shadowOffsetX = Math.max(1, sc * (contact ? 0.012 : 0.035)) * d; ctx.shadowOffsetY = Math.max(1, sc * (contact ? 0.022 : 0.065)) * d;
+}
+function noShadow(ctx) { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; }
+// draw() twice: with the soft and with the contact shadow
+function shadowed(ctx, sc, draw) {
+  pieceShadow(ctx, sc); draw();
+  pieceShadow(ctx, sc, true); draw();
+  noShadow(ctx);
+}
+
+// A round token: casts both shadows, then gets a convex shading (bright top left, darker rim) and its outline.
+// Leaves the shadow off, so what is drawn on the token does not cast a second one.
+function token(ctx, X, Y, R, fill, stroke, lw) {
+  const sc = R / 0.15; // shadow size follows the token size (board tokens are ~0.15 cell sides)
+  ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(X, Y, R, 0, 7);
+  shadowed(ctx, sc, () => ctx.fill());
+  const g = ctx.createRadialGradient(X - R * 0.35, Y - R * 0.4, R * 0.05, X, Y, R);
+  g.addColorStop(0, 'rgba(255,255,255,.6)'); g.addColorStop(0.55, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(60,45,20,.28)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke();
+}
+
 export function drawResource(ctx, X, Y, r, kind) {
-  ctx.fillStyle = '#f4efe2'; ctx.strokeStyle = '#6b5e3a'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(X, Y, r * 1.05, 0, 7); ctx.fill(); ctx.stroke();
+  token(ctx, X, Y, r * 1.05, '#f4efe2', '#6b5e3a', 1.5);
   const im = ART.res[kind];
   if (im?.ok) { const f = r * 1.5 / Math.max(im.width, im.height); ctx.drawImage(im, X - im.width * f / 2, Y - im.height * f / 2, im.width * f, im.height * f); return; }
   ctx.font = `${Math.round(r * 1.5)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';

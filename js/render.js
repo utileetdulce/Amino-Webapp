@@ -48,6 +48,24 @@ function drawTileArt(ctx, x, y, tile, rot, seed, tx, ty) {
   return true;
 }
 
+// Light inner rim on the tile edges facing the light (top left), dark rim on the others
+function bevel(ctx, v, tx, ty, sc) {
+  const P = v.map(([x, y]) => [tx(x), ty(y)]);
+  const cx = (P[0][0] + P[1][0] + P[2][0]) / 3, cy = (P[0][1] + P[1][1] + P[2][1]) / 3;
+  ctx.save();
+  ctx.beginPath(); P.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.clip();
+  ctx.lineWidth = Math.max(2, sc * 0.05); // half of it lies inside the clip
+  for (let i = 0; i < 3; i++) {
+    const [ax, ay] = P[i], [bx, by] = P[(i + 1) % 3];
+    let nx = by - ay, ny = ax - bx; // edge normal, turned to point outwards
+    if (nx * ((ax + bx) / 2 - cx) + ny * ((ay + by) / 2 - cy) < 0) { nx = -nx; ny = -ny; }
+    const lit = (nx * -0.5 + ny * -0.85) / Math.hypot(nx, ny);
+    ctx.strokeStyle = lit > 0 ? `rgba(255,248,225,${0.45 * lit})` : `rgba(30,20,0,${-0.4 * lit})`;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function triPath(ctx, v, tx, ty, sc) {
   ctx.beginPath();
   ctx.moveTo(tx(v[0][0]), ty(v[0][1]));
@@ -317,11 +335,19 @@ export class BoardView {
       ctx.fillStyle = col; ctx.fill();
       ctx.strokeStyle = 'rgba(40,40,40,.35)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
     }
-    // tiles
+    // tiles: the board casts one shadow on the table (as flat cardboard pieces), each tile gets a bevelled edge
+    ctx.beginPath();
+    for (const k in s.cells) {
+      const v = cellVerts(s.cells[k].x, s.cells[k].y);
+      v.forEach(([x, y], i) => (i ? ctx.lineTo(tx(x), ty(y)) : ctx.moveTo(tx(x), ty(y)))); ctx.closePath();
+    }
+    ctx.fillStyle = '#5c4c30';
+    shadowed(ctx, sc, () => ctx.fill(), 0.45);
     for (const k in s.cells) {
       const c = s.cells[k];
       const v = cellVerts(c.x, c.y);
       const art = drawTileArt(ctx, c.x, c.y, c.tile, c.rot, c.id + (c.overlaid ? 999 : 0), tx, ty);
+      bevel(ctx, v, tx, ty, sc);
       triPath(ctx, v, tx, ty, sc);
       if (!art) {
         const g = ctx.createLinearGradient(tx(v[0][0]), ty(v[0][1]), tx(v[1][0] + v[2][0] - v[0][0]), ty(v[1][1] + v[2][1] - v[0][1]));
@@ -475,18 +501,18 @@ function inTri(px, py, v) {
 }
 
 // Drop shadow for pieces standing on the board, light from the top left: a wide soft one, or (contact) a tight dark one
-// at the base. Canvas shadows ignore the transform, so they are scaled by the device pixel ratio.
-function pieceShadow(ctx, sc, contact = false) {
-  const d = ctx.getTransform().a;
+// at the base; `h` scales it for flatter pieces. Canvas shadows ignore the transform, so they are scaled by the device pixel ratio.
+function pieceShadow(ctx, sc, contact = false, h = 1) {
+  const d = ctx.getTransform().a * h;
   ctx.shadowColor = contact ? 'rgba(15,10,0,.6)' : 'rgba(15,10,0,.55)';
   ctx.shadowBlur = Math.max(contact ? 1.5 : 3, sc * (contact ? 0.025 : 0.09)) * d;
   ctx.shadowOffsetX = Math.max(1, sc * (contact ? 0.012 : 0.035)) * d; ctx.shadowOffsetY = Math.max(1, sc * (contact ? 0.022 : 0.065)) * d;
 }
 function noShadow(ctx) { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; }
 // draw() twice: with the soft and with the contact shadow
-function shadowed(ctx, sc, draw) {
-  pieceShadow(ctx, sc); draw();
-  pieceShadow(ctx, sc, true); draw();
+function shadowed(ctx, sc, draw, h = 1) {
+  pieceShadow(ctx, sc, false, h); draw();
+  pieceShadow(ctx, sc, true, h); draw();
   noShadow(ctx);
 }
 

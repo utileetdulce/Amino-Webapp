@@ -1,6 +1,7 @@
 // Canvas board renderer with pan/zoom and hit-testing.
-import { cellX, cellY, cellVerts, edgeMid, cellCenter, cellId, isUp, H } from './geometry.js';
+import { cellX, cellY, cellVerts, edgeMid, cellCenter, cellId, isUp, H, oppVert, edgePos } from './geometry.js';
 import { makeCellShape, PLAYER_COLORS, KINDS } from './engine.js';
+import { ART, TILE_ART_BY_TYPE, hillSprite, onArtLoad } from './art.js';
 
 export const KIND_ICON = ['🌸', '🍄', '🐛'];
 
@@ -17,6 +18,36 @@ export function tileFill(id) {
   return `rgb(${g[0] + j | 0},${g[1] + j | 0},${g[2] + j | 0})`;
 }
 
+const hasArt = (tile) => !!(ART.tiles.ok && TILE_ART_BY_TYPE[tile]);
+// Paint the original printed triangle for (tile, rot) onto cell (x, y); false if there is none
+// (type not in the print, atlas not loaded). `seed` picks one of the paintings of that type.
+function drawTileArt(ctx, x, y, tile, rot, seed, tx, ty) {
+  if (!hasArt(tile)) return false;
+  const list = TILE_ART_BY_TYPE[tile];
+  const s = list[Math.floor(hash(seed) * list.length)].v;
+  const d = [];
+  for (let e = 0; e < 3; e++) { const p = oppVert(x, y, e); d[(edgePos(x, y, e) + rot) % 3] = [tx(p[0]), ty(p[1])]; }
+  // affine atlas -> screen through the three corners
+  const sx1 = s[1][0] - s[0][0], sy1 = s[1][1] - s[0][1], sx2 = s[2][0] - s[0][0], sy2 = s[2][1] - s[0][1];
+  const dx1 = d[1][0] - d[0][0], dy1 = d[1][1] - d[0][1], dx2 = d[2][0] - d[0][0], dy2 = d[2][1] - d[0][1];
+  const det = sx1 * sy2 - sx2 * sy1;
+  const A = (dx1 * sy2 - dx2 * sy1) / det, C = (dx2 * sx1 - dx1 * sx2) / det;
+  const B = (dy1 * sy2 - dy2 * sy1) / det, D = (dy2 * sx1 - dy1 * sx2) / det;
+  const cx = (d[0][0] + d[1][0] + d[2][0]) / 3, cy = (d[0][1] + d[1][1] + d[2][1]) / 3;
+  const grow = 1 + 0.8 / Math.max(1, Math.hypot(d[0][0] - cx, d[0][1] - cy)); // ~1px overlap hides seams
+  ctx.save();
+  ctx.beginPath();
+  d.forEach(([px, py], i) => { const X = cx + (px - cx) * grow, Y = cy + (py - cy) * grow; if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+  ctx.closePath(); ctx.clip();
+  ctx.transform(A, B, C, D, d[0][0] - A * s[0][0] - C * s[0][1], d[0][1] - B * s[0][0] - D * s[0][1]);
+  const im = ART.tiles;
+  const bx = Math.max(0, Math.min(s[0][0], s[1][0], s[2][0]) - 3), by = Math.max(0, Math.min(s[0][1], s[1][1], s[2][1]) - 3);
+  const bw = Math.min(im.width - bx, Math.max(s[0][0], s[1][0], s[2][0]) + 3 - bx), bh = Math.min(im.height - by, Math.max(s[0][1], s[1][1], s[2][1]) + 3 - by);
+  ctx.drawImage(im, bx, by, bw, bh, bx, by, bw, bh);
+  ctx.restore();
+  return true;
+}
+
 function triPath(ctx, v, tx, ty, sc) {
   ctx.beginPath();
   ctx.moveTo(tx(v[0][0]), ty(v[0][1]));
@@ -26,14 +57,14 @@ function triPath(ctx, v, tx, ty, sc) {
 }
 
 // Draw path network of a cell shape. cell: {x,y,open,comps,allOpen}, junction: draw all open edges to hub
-export function drawPaths(ctx, cell, junction, tx, ty, sc, color = '#f6f2e2', width = 0.07) {
+export function drawPaths(ctx, cell, junction, tx, ty, sc, color = '#fbfaf4', width = 0.085) {
   const [cx, cy] = cellCenter(cell.x, cell.y);
   const C = [tx(cx), ty(cy)];
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const comps = junction ? [cell.allOpen] : cell.comps;
   const base = Math.max(2, width * sc);
   for (const pass of [0, 1]) {
-    ctx.strokeStyle = pass === 0 ? 'rgba(28,46,22,.38)' : color;
+    ctx.strokeStyle = pass === 0 ? 'rgba(28,46,22,.28)' : color;
     ctx.lineWidth = pass === 0 ? base + Math.max(1.5, sc * 0.03) : base;
     for (const comp of comps) {
       const pts = comp.map((e) => { const m = edgeMid(cell.x, cell.y, e); return [tx(m[0]), ty(m[1])]; });
@@ -75,6 +106,7 @@ export class BoardView {
     this.insetBottom = 0; this.insetTop = 0; this.cam = null; this.fx = []; this._raf = 0;
     this.cardView = false;
     this._bind();
+    onArtLoad(() => { if (this.cv.isConnected) this.draw(); });
     this._ro = new ResizeObserver(() => this.resize());
     this._ro.observe(canvas.parentElement || canvas);
     this.resize();
@@ -110,6 +142,14 @@ export class BoardView {
     this.ox = this.w / 2 - ((minx + maxx) / 2) * this.scale;
     this.oy = this.insetTop + vh / 2 - ((miny + maxy) / 2) * this.scale;
     this.draw();
+  }
+  // painted fill for tile types that are not in print; moves and zooms with the board
+  texture() {
+    if (!ART.texture.ok) return null;
+    this._pat = this._pat || this.ctx.createPattern(ART.texture, 'repeat');
+    const k = (this.scale * 3) / ART.texture.width;
+    this._pat.setTransform(new DOMMatrix([k, 0, 0, k, this.ox, this.oy]));
+    return this._pat;
   }
   tx(x) { return this.ox + x * this.scale; }
   ty(y) { return this.oy + y * this.scale; }
@@ -281,13 +321,19 @@ export class BoardView {
     for (const k in s.cells) {
       const c = s.cells[k];
       const v = cellVerts(c.x, c.y);
+      const art = drawTileArt(ctx, c.x, c.y, c.tile, c.rot, c.id + (c.overlaid ? 999 : 0), tx, ty);
       triPath(ctx, v, tx, ty, sc);
-      const g = ctx.createLinearGradient(tx(v[0][0]), ty(v[0][1]), tx(v[1][0] + v[2][0] - v[0][0]), ty(v[1][1] + v[2][1] - v[0][1]));
-      g.addColorStop(0, tileFill(c.id + (c.overlaid ? 999 : 0))); g.addColorStop(1, tileFill(c.id * 7 + 3));
-      ctx.fillStyle = g; ctx.fill();
-      ctx.strokeStyle = c.overlaid ? '#d8c27a' : 'rgba(255,255,255,.5)'; ctx.lineWidth = c.overlaid ? 2.2 : 1; ctx.stroke();
+      if (!art) {
+        const g = ctx.createLinearGradient(tx(v[0][0]), ty(v[0][1]), tx(v[1][0] + v[2][0] - v[0][0]), ty(v[1][1] + v[2][1] - v[0][1]));
+        g.addColorStop(0, tileFill(c.id + (c.overlaid ? 999 : 0))); g.addColorStop(1, tileFill(c.id * 7 + 3));
+        const pat = this.texture();
+        if (pat) { ctx.fillStyle = pat; ctx.fill(); ctx.globalAlpha = 0.4; }
+        ctx.fillStyle = g; ctx.fill(); ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = c.overlaid ? '#d8c27a' : art ? 'rgba(60,50,20,.35)' : 'rgba(255,255,255,.5)'; ctx.lineWidth = c.overlaid ? 2.2 : 1; ctx.stroke();
       if (this.cellColors.has(c.id)) { triPath(ctx, v, tx, ty, sc); ctx.fillStyle = this.cellColors.get(c.id); ctx.fill(); }
-      drawPaths(ctx, c, c.hill >= 0, tx, ty, sc);
+      // painted tiles carry their paths; each printed type is one connected path, so a hill adds no junction
+      if (!art) drawPaths(ctx, c, c.hill >= 0, tx, ty, sc);
     }
     // bridges
     for (const b of s.bridges) {
@@ -314,7 +360,11 @@ export class BoardView {
       const X = tx(cx), Y = ty(cy);
       const r = sc * 0.145;
       ctx.globalAlpha = 0.86;
-      if (c.hill >= 0) {
+      const hillImg = c.hill >= 0 && hillSprite(PLAYER_COLORS[c.hill]);
+      if (hillImg) {
+        const hw = r * 2.7, hh = hw * hillImg.height / hillImg.width;
+        ctx.globalAlpha = 0.95; ctx.drawImage(hillImg, X - hw / 2, Y + r * 0.5 - hh, hw, hh); ctx.globalAlpha = 0.86;
+      } else if (c.hill >= 0) {
         const hr = r * 1.3, hy = Y + r * 0.45;
         ctx.fillStyle = PLAYER_COLORS[c.hill];
         ctx.beginPath(); ctx.arc(X, hy, hr, Math.PI, 0); ctx.closePath(); ctx.fill();
@@ -339,7 +389,7 @@ export class BoardView {
       if (c.hill >= 0 || c.res >= 0 || c.block >= 0) occupied.push(c);
     }
     ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    for (const c of occupied) { ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
+    for (const c of occupied) { if (hasArt(c.tile)) continue; ctx.globalAlpha = 0.5; drawPaths(ctx, c, c.hill >= 0, tx, ty, sc, '#ffffff', 0.04); ctx.globalAlpha = 1; }
     ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = Math.max(2, sc * 0.05); ctx.shadowOffsetY = Math.max(1, sc * 0.02);
     // ants: placed on the path group (component) they actually stand in
     const byCell = {};
@@ -362,8 +412,8 @@ export class BoardView {
         ctx.globalAlpha = 0.92;
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(X, Y, r * 1.15, 0, 7); ctx.fill();
         ctx.lineWidth = Math.max(2, sc * 0.045); ctx.strokeStyle = p.color; ctx.stroke();
-        ctx.font = `${Math.round(r * 1.7)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
-        ctx.fillText('🐜', X, Y + 1);
+        if (ART.ant.ok) { const aw = r * 1.8, ah = aw * ART.ant.height / ART.ant.width; ctx.drawImage(ART.ant, X - aw / 2, Y - ah / 2, aw, ah); }
+        else { ctx.font = `${Math.round(r * 1.7)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000'; ctx.fillText('🐜', X, Y + 1); }
         if (p.carry >= 0) { drawResource(ctx, X + r * 1.15, Y - r * 1.15, r * 0.78, s.resources[p.carry].kind); ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(2, sc * 0.035); ctx.beginPath(); ctx.arc(X + r * 1.15, Y - r * 1.15, r * 0.9, 0, 7); ctx.stroke(); }
         ctx.globalAlpha = 1;
       });
@@ -375,9 +425,12 @@ export class BoardView {
       const sh = makeCellShape(cellX(g.cell), cellY(g.cell), g.tile, g.rot);
       const cell = { x: cellX(g.cell), y: cellY(g.cell), ...sh };
       const v = cellVerts(cell.x, cell.y);
-      triPath(ctx, v, tx, ty, sc);
-      ctx.globalAlpha = 0.85; ctx.fillStyle = g.ok === false ? '#b55' : '#9bbf86'; ctx.fill();
-      drawPaths(ctx, cell, g.piece === 1, tx, ty, sc);
+      ctx.globalAlpha = 0.85;
+      if (g.ok === false || !drawTileArt(ctx, cell.x, cell.y, g.tile, g.rot, g.cell, tx, ty)) {
+        triPath(ctx, v, tx, ty, sc);
+        ctx.fillStyle = g.ok === false ? '#b55' : '#9bbf86'; ctx.fill();
+        drawPaths(ctx, cell, g.piece === 1, tx, ty, sc);
+      }
       ctx.globalAlpha = 1;
       ctx.strokeStyle = g.ok === false ? '#c22' : '#fff'; ctx.lineWidth = 2.5; triPath(ctx, v, tx, ty, sc); ctx.stroke();
       const [cx, cy] = cellCenter(cell.x, cell.y);
@@ -430,6 +483,8 @@ function inTri(px, py, v) {
 export function drawResource(ctx, X, Y, r, kind) {
   ctx.fillStyle = '#f4efe2'; ctx.strokeStyle = '#6b5e3a'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(X, Y, r * 1.05, 0, 7); ctx.fill(); ctx.stroke();
+  const im = ART.res[kind];
+  if (im?.ok) { const f = r * 1.5 / Math.max(im.width, im.height); ctx.drawImage(im, X - im.width * f / 2, Y - im.height * f / 2, im.width * f, im.height * f); return; }
   ctx.font = `${Math.round(r * 1.5)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
   ctx.fillText(KIND_ICON[kind], X, Y + 1);
 }
@@ -448,8 +503,9 @@ export function drawTilePreview(canvas, tile, rot, { color = '#8db37a', size = 5
   const sc = size * 0.92;
   const tx = (x) => 2 + x * sc, ty = (y) => 2 + y * sc;
   const v = cellVerts(0, 0);
+  const art = drawTileArt(ctx, 0, 0, tile, rot, tile * 31 + 5, tx, ty);
   triPath(ctx, v, tx, ty, sc);
-  ctx.fillStyle = color; ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1.5; ctx.stroke();
-  drawPaths(ctx, cell, false, tx, ty, sc, '#f7f4e8', 0.075);
+  if (!art) { ctx.fillStyle = color; ctx.fill(); }
+  ctx.strokeStyle = art ? 'rgba(60,50,20,.45)' : 'rgba(255,255,255,.7)'; ctx.lineWidth = art ? 1 : 1.5; ctx.stroke();
+  if (!art) drawPaths(ctx, cell, false, tx, ty, sc, '#f7f4e8', 0.085);
 }

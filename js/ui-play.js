@@ -9,8 +9,11 @@ import { Net } from './nn.js';
 import { netFromJSON } from './gnet.js';
 import { listAllModels, fetchModel } from './store.js';
 import { modelLabel, rulesStatus, RULES_VERSION } from './modelmeta.js';
+import { cardSrc, CARD_BACK, colonySrc, resSrc, onArtLoad } from './art.js';
 
-const CARD_ICON = { bridge: '🌉', superimpose: '🧩', blockage: '⛔', wings: '🪽', revenge: '🔥', transport: '🎲' };
+// original card and resource pictures (js/art.js)
+const cardImg = (t, cls = 'cardimg') => el('img', { class: cls, src: cardSrc(t), alt: CARD_NAMES[t] });
+const resImg = (k) => el('img', { class: 'resimg', src: resSrc(k), alt: KINDS[k] });
 
 // search strength of a "Netz + Baumsuche" seat: simulations per decision and the thinking-time limit (the search stops at
 // whichever comes first; 0 = no time limit)
@@ -345,6 +348,7 @@ export class PlayUI {
     this.modal = el('div', { class: 'modal', hidden: true });
     root.append(this.modal);
     this.board = new BoardView(canvas);
+    onArtLoad(() => { if (canvas.isConnected && this.ctrl) this.refresh(); }); // tile previews in the side panel
     this.board.onClick = (cid, ev) => this.onBoardClick(cid, ev);
     this.board.onHover = (cid) => this.onBoardHover(cid);
     this.board.onWheelRotate = (d) => this.rotate(d);
@@ -453,7 +457,7 @@ export class PlayUI {
       this._announced = false;
       if (post.dice) this.board.rollDice({ cell: post.dice.cell, values: post.dice.values, card: post.dice.card });
       if (post.big) this.showBig(post.big);
-      else if (showCard) this.showBig({ icon: CARD_ICON[post.card], title: `Neue Karte: ${CARD_NAMES[post.card]}`, sub: CARD_HELP[post.card], kind: 'card', color: col, ms: 3600 });
+      else if (showCard) this.showBig({ icon: cardImg(post.card, 'bigcard'), title: `Neue Karte: ${CARD_NAMES[post.card]}`, sub: CARD_HELP[post.card], kind: 'card', color: col, ms: 3600 });
     }
     this.skipBtn.hidden = s.over || this.myTurn() || this.ctrl.seats[actor(s)]?.kind !== 'ai';
     this.refresh();
@@ -641,7 +645,7 @@ export class PlayUI {
     box.append(this.turnHint());
     box.append(el('small', { class: 'muted' }, s.used.income ? '✓ Einkommen für diesen Zug schon genommen.' : 'Wähle eine Einnahme (1× pro Zug):'));
     box.append(this.opt('🔺', '4 Dreiecke', `Stapel: ${s.tileStack.length}`, has('inc_tiles'), () => dsp({ t: 'inc_tiles' })));
-    box.append(this.opt('🃏', 'Ameisenkarte', `Stapel: ${s.cardStack.length}`, has('inc_card'), () => dsp({ t: 'inc_card' })));
+    box.append(this.opt(el('img', { class: 'cardimg', src: CARD_BACK, alt: '' }), 'Ameisenkarte', `Stapel: ${s.cardStack.length}`, has('inc_card'), () => dsp({ t: 'inc_card' })));
     box.append(this.opt('⛰', 'Hügel zurücknehmen', `${2 - p.hillsInHand} Hügel liegen auf dem Brett`, has('inc_hill'), () => this.pickHill()));
     box.append(el('hr'));
     box.append(this.opt('🔄', 'Dreieck tauschen', s.used.swap ? 'schon benutzt' : '1× pro Zug – gegen ein Dreieck eines Gegners', has('swap'), () => this.swapDialog()));
@@ -736,7 +740,7 @@ export class PlayUI {
       }
       if (items.length) {
         box.append(el('small', { class: 'muted' }, 'Freie Ressourcen in Reichweite:'));
-        for (const { r, steps } of items) box.append(this.opt(KIND_ICON[r.kind], `${KINDS[r.kind]} holen`, `${p.values[r.kind]} P · läuft hin & lädt auf`, true, () => this.seq(steps)));
+        for (const { r, steps } of items) box.append(this.opt(resImg(r.kind), `${KINDS[r.kind]} holen`, `${p.values[r.kind]} P · läuft hin & lädt auf`, true, () => this.seq(steps)));
       }
     }
     return box;
@@ -761,11 +765,13 @@ export class PlayUI {
       ['revenge', '🔥', 'Rache', 'wird automatisch nach einem verlorenen Kampf angeboten', false, null],
       ['transport', '🎲', 'Transport', 'wähle sie im Reiter „Bewegen“ beim Transport', false, null],
     ];
-    for (const [id, icon, name, sub, ok, fn] of defs) {
+    for (const [id, , name, sub, ok, fn] of defs) {
       if (!cnt[id]) continue;
-      box.append(this.opt(icon, `${name} ×${cnt[id]}`, sub, ok && this.myTurn(), fn || (() => {}), this.mode === id ? 'on' : ''));
+      box.append(this.opt(cardImg(id), `${name} ×${cnt[id]}`, sub, ok && this.myTurn(), fn || (() => {}), this.mode === id ? 'on' : ''));
     }
-    if (!cnt.wings && p.cards.length >= 2) box.append(this.opt('🪽', 'Flügel (2 Karten tauschen)', 'zwei beliebige Karten werden zu Flügeln', has('wings') && this.myTurn(), go('wings'), this.mode === 'wings' ? 'on' : ''));
+    if (!cnt.wings && p.cards.length >= 2) box.append(this.opt(cardImg('wings'), 'Flügel (2 Karten tauschen)', 'zwei beliebige Karten werden zu Flügeln', has('wings') && this.myTurn(), go('wings'), this.mode === 'wings' ? 'on' : ''));
+    box.append(el('details', { class: 'colony' }, el('summary', {}, 'Deine Koloniekarte (Aktionen und Punkte)'),
+      el('img', { src: colonySrc(p.values), alt: 'Koloniekarte: ' + [0, 1, 2].map((k) => `${KINDS[k]} ${p.values[k]} P`).join(', ') })));
     return box;
   }
 
@@ -804,11 +810,11 @@ export class PlayUI {
     const hud = this.hud;
     hud.innerHTML = '';
     for (const p of s.players) {
-      const store = [0, 1, 2].map((k) => { const n = s.resources.filter((r) => r.owner === p.idx && r.kind === k).length; return n ? el('span', { class: 'chip', title: `${KINDS[k]} = ${p.values[k]} P` }, KIND_ICON[k], '×' + n) : null; });
+      const store = [0, 1, 2].map((k) => { const n = s.resources.filter((r) => r.owner === p.idx && r.kind === k).length; return n ? el('span', { class: 'chip', title: `${KINDS[k]} = ${p.values[k]} P` }, resImg(k), '×' + n) : null; });
       hud.append(el('div', { class: 'hp' + (actor(s) === p.idx && !s.over ? ' active' : '') + (p.idx === me ? ' me' : ''), style: `--pc:${p.color}`, title: this.ctrl.seats[p.idx]?.modelLabel ? `Modell: ${this.ctrl.seats[p.idx].modelLabel}` : null },
         el('span', { class: 'dot', style: `background:${p.color}` }), el('b', {}, p.name), el('span', { class: 'score' }, `${score(s, p.idx)}/${WIN_POINTS}`),
         el('span', { class: 'hm' }, store, el('span', { class: 'chip', title: 'Dreiecke' }, '▲', p.hand.length), el('span', { class: 'chip', title: 'Karten' }, '🃏', p.cards.length),
-          p.carry >= 0 ? el('span', { class: 'chip', title: 'trägt' }, '🐜', KIND_ICON[s.resources[p.carry].kind]) : null)));
+          p.carry >= 0 ? el('span', { class: 'chip', title: 'trägt' }, '🐜', resImg(s.resources[p.carry].kind)) : null)));
     }
   }
 

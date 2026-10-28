@@ -236,3 +236,16 @@ button.big { min-height: 46px; font-size: 16px; padding: 8px 16px; }
   .hp .hm { width: auto; flex-wrap: wrap; }
   .banner { left: 50%; top: calc(var(--hudh, 0px) + 12px); }
 }
+
+/* ---- original game pictures (js/art.js) ---- */
+.opt .oi { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; }
+.opt .oi .cardimg { height: 42px; width: auto; border-radius: 4px; box-shadow: 0 1px 4px #0004; }
+.opt .oi .resimg { height: 28px; }
+.resimg { height: 1.2em; width: auto; vertical-align: -0.25em; }
+.big-icon .bigcard { height: 120px; width: auto; border-radius: 8px; box-shadow: 0 3px 12px #0005; display: block; margin: 0 auto 2px; }
+details.colony { margin-top: 8px; } details.colony summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details.colony img { width: 100%; max-width: 420px; border-radius: 10px; margin-top: 6px; display: block; }
+.rules .rfig { margin: 8px 0 12px; max-width: 460px; } .rules .rfig img { width: 100%; border-radius: 10px; display: block; }
+.rules .rfig figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.rules li.rc { list-style: none; display: flex; gap: 10px; align-items: center; margin: 6px 0 6px -18px; }
+.rules li.rc img { height: 54px; width: auto; border-radius: 4px; box-shadow: 0 1px 4px #0004; flex: none; }

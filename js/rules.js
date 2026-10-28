@@ -3,7 +3,8 @@ export const RULES_HTML = `
 <h2>Amino – Kurzregeln</h2>
 <p>Amino ist ein Legespiel von Asis Hallab und Philipp Niederlag (<a href="https://github.com/asishallab/amino" target="_blank" rel="noopener">Original &amp; Handbuch</a>).
 Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Ressourcen und bringst sie in deinen Hügel.
-<b>Wer zuerst 7 Punkte gesammelt hat, gewinnt.</b> Jeder Spieler bewertet Blume 🌸, Pilz 🍄 und Raupe 🐛 anders (1–3 Punkte, steht an der Hügelkarte).</p>
+<b>Wer zuerst 7 Punkte gesammelt hat, gewinnt.</b> Jeder Spieler bewertet Blume 🌸, Pilz 🍄 und Raupe 🐛 anders (1–3 Punkte, steht an der Koloniekarte).</p>
+<figure class="rfig"><img src="assets/colony-123.webp" alt="Koloniekarte"><figcaption>Koloniekarte: alle Aktionen eines Zuges und rechts die Kammern mit den Punktwerten (hier Blume 1, Pilz 2, Raupe 3). Im Spiel findest du deine eigene unter „Karten“.</figcaption></figure>
 <h3>Ein Zug – Aktionen in beliebiger Reihenfolge</h3>
 <ul>
 <li><b>Einkommen (1×):</b> 4 Dreiecke <i>oder</i> 1 Ameisenkarte <i>oder</i> einen gelegten Hügel zurück auf die Hand.</li>
@@ -15,15 +16,15 @@ Du baust mit dreieckigen Plättchen ein Wegelabyrinth, führst eine Ameise zu Re
 </ul>
 <h3>Ameisenkarten</h3>
 <ul>
-<li><b>Brücke</b> – verbindet zwei Wege, nur du kannst sie überqueren.</li>
-<li><b>Überlagern</b> – lege Dreiecke über freie Felder und verändere das Labyrinth.</li>
-<li><b>Blockade</b> – sperrt ein Dreieck bis zu deinem nächsten Zug.</li>
-<li><b>Flügel</b> – fliege zu einem beliebigen Dreieck (zwei beliebige Karten lassen sich zu Flügeln tauschen).</li>
-<li><b>Rache</b> – verlorenen Kampf wiederholen.</li>
-<li><b>Transport</b> – zwei Würfel beim Transport.</li>
+<li class="rc"><img src="assets/card-bridge.webp" alt=""><span><b>Brücke</b> – verbindet zwei Wege, nur du kannst sie überqueren.</span></li>
+<li class="rc"><img src="assets/card-superimpose.webp" alt=""><span><b>Überlagern</b> – lege Dreiecke über freie Felder und verändere das Labyrinth.</span></li>
+<li class="rc"><img src="assets/card-blockage.webp" alt=""><span><b>Blockade</b> – sperrt ein Dreieck bis zu deinem nächsten Zug.</span></li>
+<li class="rc"><img src="assets/card-wings.webp" alt=""><span><b>Flügel</b> – fliege zu einem beliebigen Dreieck (zwei beliebige Karten lassen sich zu Flügeln tauschen).</span></li>
+<li class="rc"><img src="assets/card-revenge.webp" alt=""><span><b>Rache</b> – verlorenen Kampf wiederholen.</span></li>
+<li class="rc"><img src="assets/card-transport.webp" alt=""><span><b>Transport</b> – zwei Würfel beim Transport.</span></li>
 </ul>
 <h3>Bedienung</h3>
 <p>Dreieck in der Hand anklicken, mit <kbd>R</kbd> / Rechtsklick drehen, auf ein hervorgehobenes Feld klicken. Brett: ziehen = verschieben, Mausrad = Zoom.</p>
 <h3>Abweichungen von der Tabletop-Vorlage</h3>
-<p>Die genauen Wege-Muster der sechs Dreieckstypen sind in dieser Umsetzung nachempfunden (Y-Kreuzung, Kurve, Sackgasse, Gabel mit Stummel, zwei bzw. drei getrennte Stummel). Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel-Felder verbinden alle ihre Wege (eine Ressource dagegen nicht); Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
+<p>Die Druckvorlage enthält drei Wege-Muster (Y-Kreuzung, Kurve, Sackgasse); diese Dreiecke zeigen hier die gemalten Original-Dreiecke. Die drei Muster mit getrennten Wegen (Gabel mit Stummel, zwei bzw. drei getrennte Stummel) sind eine Ergänzung dieser Umsetzung und werden gezeichnet. Ressourcen werden verdeckt vom Stapel gezogen, Einkommen/Karten/Kampf folgen dem Handbuch. Regeln dieser Umsetzung sind bewusst vereinfacht: Hügel-Felder verbinden alle ihre Wege (eine Ressource dagegen nicht); Brücken verbinden zwei <i>benachbarte</i> Dreiecke.</p>
 </div>`;

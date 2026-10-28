@@ -69,6 +69,11 @@ export function edgeVerts(x, y, e) {
   const m = isUp(x, y) ? EV_UP[e] : EV_DOWN[e];
   return [v[m[0]], v[m[1]]];
 }
+// The corner of the cell opposite edge e.
+export function oppVert(x, y, e) {
+  const m = isUp(x, y) ? EV_UP[e] : EV_DOWN[e];
+  return cellVerts(x, y)[3 - m[0] - m[1]];
+}
 export function edgeMid(x, y, e) {
   const [a, b] = edgeVerts(x, y, e);
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];

@@ -135,5 +135,19 @@
   "name": "Graph-Netz r6 (Regeln v6, bester Zwischenstand)",
   "note": "Bester 16-Partien-Test des r6-Laufs (Iter. 320): 49 % (±5) gegen graph-e1 – gleich stark, aber unter Regelversion 6 trainiert. Standardmodell vom 27. bis 28.10.2026.",
   "default": false
+ },
+ "graph-k2.json": {
+  "default": false
+ },
+ "graph-t9.json": {
+  "status": "",
+  "name": "Graph-Netz t9 (Regeln v9, erkennt Einsperren)",
+  "note": "60 Minuten ab graph-k2 mit dem graph-e1-Rezept, erweitert auf Merkmalsversion 3 (Eingänge für „Ameise abgeschnitten“ und Vorschau je Kandidat). Mit Suche 59 % (±5) gegen graph-k2 (400 Partien), 85 % gegen az-vtd (graph-k2: 80 %), 94 % gegen die Heuristik. Im Browser etwa 1,7-mal langsamer je Simulation als Version 2.",
+  "default": true
+ },
+ "graph-t9.best.json": {
+  "status": "",
+  "name": "Graph-Netz t9 (bester Zwischenstand)",
+  "note": "Bester 16-Partien-Test des t9-Laufs (verrauscht): 55 % (±5) gegen graph-k2 – schwächer als der Endstand."
  }
 }

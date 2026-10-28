@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-28T08:50:33.802Z",
+ "updated": "2026-10-28T12:33:16.679Z",
  "models": [
   {
    "file": "az-kurz.json",
@@ -554,7 +554,7 @@
    "iter": 76,
    "note": "40 Minuten ab graph-k1 unter Regelversion 9 (Wege zuerst vorbereiten, dann gehen), Rezept wie graph-e1. 55 % (±6) gegen graph-k1 unter den neuen Regeln, 95 % gegen die Heuristik (+5,57 Punkte), 21 Entscheidungen je Zug (vor Regel v8: 60).",
    "status": "",
-   "default": true,
+   "default": false,
    "heuristicRate": null,
    "rawRate": null,
    "randomRate": null
@@ -593,6 +593,42 @@
    "default": false,
    "heuristicRate": 0.84375,
    "rawRate": 0.875,
+   "randomRate": null
+  },
+  {
+   "file": "graph-t9.best.json",
+   "id": "m-1a18242fe0c-9300",
+   "name": "Graph-Netz t9 (bester Zwischenstand)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-28T11:26:30.000Z",
+   "updatedAt": "2026-10-28T12:25:24.000Z",
+   "rulesVersion": 9,
+   "games": 22800,
+   "iter": 475,
+   "note": "Bester 16-Partien-Test des t9-Laufs (verrauscht): 55 % (±5) gegen graph-k2 – schwächer als der Endstand.",
+   "status": "",
+   "default": false,
+   "heuristicRate": 1,
+   "rawRate": 0.9375,
+   "randomRate": null
+  },
+  {
+   "file": "graph-t9.json",
+   "id": "m-1a18242fe0c-9300",
+   "name": "Graph-Netz t9 (Regeln v9, erkennt Einsperren)",
+   "kind": "az",
+   "trainer": "rust",
+   "createdAt": "2026-10-28T11:26:30.000Z",
+   "updatedAt": "2026-10-28T12:26:35.000Z",
+   "rulesVersion": 9,
+   "games": 23232,
+   "iter": 484,
+   "note": "60 Minuten ab graph-k2 mit dem graph-e1-Rezept, erweitert auf Merkmalsversion 3 (Eingänge für „Ameise abgeschnitten“ und Vorschau je Kandidat). Mit Suche 59 % (±5) gegen graph-k2 (400 Partien), 85 % gegen az-vtd (graph-k2: 80 %), 94 % gegen die Heuristik. Im Browser etwa 1,7-mal langsamer je Simulation als Version 2.",
+   "status": "",
+   "default": true,
+   "heuristicRate": 0.9375,
+   "rawRate": 0.84375,
    "randomRate": null
   },
   {
